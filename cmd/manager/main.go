@@ -9,18 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"strconv"
 
 	"github.com/OpenFogStack/tinyFaaS/pkg/docker"
 	"github.com/OpenFogStack/tinyFaaS/pkg/manager"
-	"github.com/google/uuid"
-)
-
-const (
-	ConfigPort          = 8080
-	RProxyConfigPort    = 8081
-	RProxyListenAddress = ""
-	RProxyBin           = "./rproxy"
+	"github.com/OpenFogStack/tinyFaaS/pkg/tfconfig"
+	"github.com/pelletier/go-toml/v2"
 )
 
 type server struct {
@@ -28,77 +21,77 @@ type server struct {
 }
 
 func main() {
+	config := tfconfig.DefaultConfig()
+
+	if len(os.Args) == 2 {
+		configFile := os.Args[1]
+		log.Println("reading config from", configFile)
+
+		// Read the config file into config variable
+		file, err := os.ReadFile(configFile)
+		if err != nil {
+			log.Fatalf("Error reading the config file: %v", err)
+		}
+
+		if err := toml.Unmarshal(file, &config); err != nil {
+			log.Fatalf("Error unmarshalling the config file: %v", err)
+		}
+	} else {
+		log.Fatalln("Usage: ./manager <config-file>")
+	}
+
+	log.Printf("config: %+v\n", config)
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.SetPrefix("manager: ")
 
-	ports := map[string]int{
-		"coap": 5683,
-		"http": 8000,
-		"grpc": 9000,
-	}
-
-	for p := range ports {
-		portstr := os.Getenv(p + "_PORT")
-
-		if portstr == "" {
-			continue
-		}
-
-		port, err := strconv.Atoi(portstr)
-
-		if err != nil {
-			log.Fatalf("invalid port for protocol %s: %s (must be an integer!)", p, err)
-		}
-
-		if port < 0 {
-			delete(ports, p)
-			continue
-		}
-
-		if port > 65535 {
-			log.Fatalf("invalid port for protocol %s: %s (must be an integer lower than 65535!)", p, err)
-		}
-
-		ports[p] = port
-	}
-
-	// setting backend to docker
-	id := uuid.New().String()
-
-	// find backend
-	backend, ok := os.LookupEnv("TF_BACKEND")
-
-	if !ok {
-		backend = "docker"
-		log.Println("using default backend docker")
-	}
-
 	var tfBackend manager.Backend
-	switch backend {
+
+	switch config.Backend {
 	case "docker":
 		log.Println("using docker backend")
-		tfBackend = docker.New(id)
+		tfBackend = docker.New(config.ID)
 	default:
-		log.Fatalf("invalid backend %s", backend)
+		log.Fatalf("invalid backend %s", config.Backend)
+	}
+
+	switch config.Mode {
+	case "edge":
+		log.Println("running in edge mode")
+	case "fog":
+		log.Println("running in fog mode")
+	case "cloud":
+		log.Println("running in cloud mode")
+	default:
+		log.Fatalf("invalid mode %s", config.Mode)
+	}
+
+	ports := map[string]int{
+		"coap": config.COAPPort,
+		"http": config.HTTPPort,
+		"grpc": config.GRPCPort,
 	}
 
 	ms := manager.New(
-		id,
-		RProxyListenAddress,
+		config.ID,
+		config.RProxyListenAddress,
 		ports,
-		RProxyConfigPort,
+		config.RProxyConfigPort,
 		tfBackend,
 	)
 
-	rproxyArgs := []string{fmt.Sprintf("%s:%d", RProxyListenAddress, RProxyConfigPort)}
+	/*
+		rproxyArgs := []string{fmt.Sprintf("%s:%d", config.RProxyListenAddress, config.RProxyConfigPort)}
 
-	for prot, port := range ports {
-		rproxyArgs = append(rproxyArgs, fmt.Sprintf("%s:%s:%d", prot, RProxyListenAddress, port))
-	}
+		for prot, port := range ports {
+			rproxyArgs = append(rproxyArgs, fmt.Sprintf("%s:%s:%d", prot, config.RProxyListenAddress, port))
+		}
+	*/
+
+	rproxyArgs := []string{os.Args[1]}
 
 	log.Println("rproxy args:", rproxyArgs)
-	c := exec.Command(RProxyBin, rproxyArgs...)
+	c := exec.Command(config.RProxyBin, rproxyArgs...)
 
 	stdout, err := c.StdoutPipe()
 	if err != nil {
@@ -175,7 +168,7 @@ func main() {
 
 	// start server
 	log.Println("starting HTTP server")
-	addr := fmt.Sprintf(":%d", ConfigPort)
+	addr := fmt.Sprintf(":%d", config.ConfigPort)
 	err = http.ListenAndServe(addr, r)
 	if err != nil {
 		log.Fatal(err)

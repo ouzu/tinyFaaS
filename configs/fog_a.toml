@@ -1,0 +1,13 @@
+ConfigPort = 8280
+RProxyConfigPort = 8281
+RProxyListenAddress = "127.0.0.1"
+RProxyBin = "./rproxy"
+
+COAPPort = 5200
+HTTPPort = 8200
+GRPCPort = 9200
+
+Backend = "docker"
+ID = "fog_a"
+
+Mode = "fog"

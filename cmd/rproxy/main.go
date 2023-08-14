@@ -7,63 +7,53 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/OpenFogStack/tinyFaaS/pkg/coap"
 	"github.com/OpenFogStack/tinyFaaS/pkg/grpc"
 	tfhttp "github.com/OpenFogStack/tinyFaaS/pkg/http"
 	"github.com/OpenFogStack/tinyFaaS/pkg/rproxy"
+	"github.com/OpenFogStack/tinyFaaS/pkg/tfconfig"
+	"github.com/pelletier/go-toml/v2"
 )
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.SetPrefix("rproxy: ")
 
-	if len(os.Args) <= 3 {
-		fmt.Println("Usage: ./rproxy <listen-addr> [<protocol>:<listen-addr>]")
-		os.Exit(1)
+	if len(os.Args) != 2 {
+		log.Fatalln("Usage: ./rproxy <config-file>")
 	}
 
-	rproxyListenAddress := os.Args[1]
+	configFile := os.Args[1]
+	log.Println("reading config from", configFile)
 
-	listenAddrs := make(map[string]string)
-
-	for _, arg := range os.Args[2:] {
-		prot, listenAddr, ok := strings.Cut(arg, ":")
-
-		if !ok {
-			fmt.Println("Usage: ./rproxy <listen-addr> <protocol>:<listen-addr>")
-			os.Exit(1)
-		}
-
-		prot = strings.ToLower(prot)
-		listenAddr = strings.ToLower(listenAddr)
-
-		log.Printf("adding %s listener on %s", prot, listenAddr)
-		listenAddrs[prot] = listenAddr
+	// Read the config file into config variable
+	file, err := os.ReadFile(configFile)
+	if err != nil {
+		log.Fatalf("Error reading the config file: %v", err)
 	}
 
-	if len(listenAddrs) == 0 {
-		return // nothing to do
+	config := tfconfig.DefaultConfig()
+	if err := toml.Unmarshal(file, &config); err != nil {
+		log.Fatalf("Error unmarshalling the config file: %v", err)
 	}
 
 	r := rproxy.New()
 
 	// CoAP
-	if listenAddr, ok := listenAddrs["coap"]; ok {
-		log.Printf("starting coap server on %s", listenAddr)
-		go coap.Start(r, listenAddr)
-	}
+	coapAddr := fmt.Sprintf("%s:%d", config.RProxyListenAddress, config.COAPPort)
+	log.Printf("adding coap listener on %s", coapAddr)
+	go coap.Start(r, coapAddr)
+
 	// HTTP
-	if listenAddr, ok := listenAddrs["http"]; ok {
-		log.Printf("starting http server on %s", listenAddr)
-		go tfhttp.Start(r, listenAddr)
-	}
+	httpAddr := fmt.Sprintf("%s:%d", config.RProxyListenAddress, config.HTTPPort)
+	log.Printf("adding http listener on %s", httpAddr)
+	go tfhttp.Start(r, httpAddr)
+
 	// GRPC
-	if listenAddr, ok := listenAddrs["grpc"]; ok {
-		log.Printf("starting grpc server on %s", listenAddr)
-		go grpc.Start(r, listenAddr)
-	}
+	grpcAddr := fmt.Sprintf("%s:%d", config.RProxyListenAddress, config.GRPCPort)
+	log.Printf("adding grpc listener on %s", grpcAddr)
+	go grpc.Start(r, grpcAddr)
 
 	server := http.NewServeMux()
 
@@ -123,8 +113,10 @@ func main() {
 		}
 	})
 
-	log.Printf("listening on %s", rproxyListenAddress)
-	err := http.ListenAndServe(rproxyListenAddress, server)
+	rproxyAddr := fmt.Sprintf("%s:%d", config.RProxyListenAddress, config.RProxyConfigPort)
+
+	log.Printf("listening on %s", rproxyAddr)
+	err = http.ListenAndServe(rproxyAddr, server)
 
 	if err != nil {
 		log.Printf("%s", err)

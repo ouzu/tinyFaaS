@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package node;
+
+option go_package = "github.com/OpenFogStack/tinyFaaS/pkg/registry/node";
+
+service TFRegistry {
+    rpc Info(Empty) returns (NodeAddress);
+    rpc Register(NodeAddress) returns (Empty);
+    rpc UpdateSiblingList(SiblingList) returns (Empty);
+    rpc GetFunctionList(Empty) returns (FunctionList);
+    rpc RegisterNewFunction(RegisterFunction) returns (Empty);
+}
+
+message NodeAddress {
+    string address = 1;
+    string name = 2;
+}
+
+message SiblingList {
+    repeated NodeAddress addresses = 1;
+}
+
+message Empty {}
+
+message FunctionList {
+    repeated string function_names = 1;
+}
+
+message RegisterFunction {
+    string function_name = 1;
+}
+

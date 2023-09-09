@@ -1,13 +1,17 @@
-ConfigPort = 8080
-RProxyConfigPort = 8081
+ConfigPort = 8380
+RProxyConfigPort = 8381
 RProxyListenAddress = "127.0.0.1"
 RProxyBin = "./rproxy"
 
-COAPPort = 5000
-HTTPPort = 8000
-GRPCPort = 9000
+COAPPort = 5300
+HTTPPort = 8300
+GRPCPort = 9300
 
 Backend = "docker"
 ID = "edge_a"
 
 Mode = "edge"
+
+RegistryPort = 8382
+Address = "localhost:8382"
+ParentAddress = "localhost:8282"

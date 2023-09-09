@@ -11,3 +11,7 @@ Backend = "docker"
 ID = "fog_a"
 
 Mode = "fog"
+
+RegistryPort = 8282
+Address = "localhost:8282"
+ParentAddress = "localhost:8082"

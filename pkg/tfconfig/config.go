@@ -15,7 +15,10 @@ type TFConfig struct {
 	Backend string
 	ID      string
 
-	Mode string
+	Mode          string
+	Address       string
+	ParentAddress string
+	RegistryPort  int
 }
 
 func DefaultConfig() TFConfig {
@@ -32,6 +35,9 @@ func DefaultConfig() TFConfig {
 		Backend: "docker",
 		ID:      uuid.NewString(),
 
-		Mode: "edge",
+		Mode:          "edge",
+		Address:       "",
+		ParentAddress: "",
+		RegistryPort:  8082,
 	}
 }

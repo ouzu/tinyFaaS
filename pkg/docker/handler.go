@@ -2,6 +2,7 @@ package docker
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/archive"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/google/uuid"
 )
 
@@ -61,7 +63,7 @@ func (db *DockerBackend) Stop() error {
 	return nil
 }
 
-func (db *DockerBackend) Create(name string, env string, threads int, filedir string) (manager.Handler, error) {
+func (db *DockerBackend) Create(name string, env string, threads int, filedir string, envs map[string]string) (manager.Handler, error) {
 
 	// make a unique function name by appending uuid string to function name
 	uuid, err := uuid.NewRandom()
@@ -163,6 +165,12 @@ func (db *DockerBackend) Create(name string, env string, threads int, filedir st
 
 	log.Println("created network", dh.uniqueName, "with id", network.ID)
 
+	e := make([]string, 0, len(envs))
+
+	for k, v := range envs {
+		e = append(e, fmt.Sprintf("%s=%s", k, v))
+	}
+
 	// create containers
 	// docker run -d --network <network> --name <container> <image>
 	for i := 0; i < dh.threads; i++ {
@@ -174,6 +182,7 @@ func (db *DockerBackend) Create(name string, env string, threads int, filedir st
 					"tinyfaas-function": dh.name,
 					"tinyFaaS":          db.tinyFaaSID,
 				},
+				Env: e,
 			},
 			&container.HostConfig{
 				NetworkMode: container.NetworkMode(dh.uniqueName),
@@ -359,10 +368,10 @@ func (dh *dockerHandler) Destroy() error {
 	return nil
 }
 
-func (dh *dockerHandler) Logs() (string, error) {
+func (dh *dockerHandler) Logs() (io.Reader, error) {
 	// get container logs
 	// docker logs <container>
-	var logs string
+	var logs bytes.Buffer
 	for _, container := range dh.containers {
 		l, err := dh.client.ContainerLogs(
 			context.Background(),
@@ -370,22 +379,36 @@ func (dh *dockerHandler) Logs() (string, error) {
 			types.ContainerLogsOptions{
 				ShowStdout: true,
 				ShowStderr: true,
+				Timestamps: true,
 			},
 		)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 
-		lstr, err := io.ReadAll(l)
+		var lstdout bytes.Buffer
+		var lstderr bytes.Buffer
+
+		_, err = stdcopy.StdCopy(&lstdout, &lstderr, l)
+
 		l.Close()
 
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 
-		logs += string(lstr)
-		logs += "\n"
+		// add a prefix to each line
+		// function=<function> handler=<handler> <line>
+		scanner := bufio.NewScanner(&lstdout)
+
+		for scanner.Scan() {
+			logs.WriteString(fmt.Sprintf("function=%s handler=%s %s\n", dh.name, container, scanner.Text()))
+		}
+
+		if err := scanner.Err(); err != nil {
+			return nil, err
+		}
 	}
 
-	return logs, nil
+	return &logs, nil
 }

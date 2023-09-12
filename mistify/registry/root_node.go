@@ -20,7 +20,8 @@ func NewRootNode(config *tfconfig.TFConfig) *RootNode {
 				ManagerAddress: fmt.Sprintf("%s:%d", config.Host, config.ConfigPort),
 				ProxyAddress:   fmt.Sprintf("%s:%d", config.Host, config.HTTPPort),
 			},
-			config: config,
+			config:   config,
+			registry: make(map[string]string),
 		},
 	}
 }

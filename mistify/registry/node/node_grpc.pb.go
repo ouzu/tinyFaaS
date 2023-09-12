@@ -19,12 +19,13 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Mistify_Info_FullMethodName                = "/node.Mistify/Info"
-	Mistify_Register_FullMethodName            = "/node.Mistify/Register"
-	Mistify_UpdateSiblingList_FullMethodName   = "/node.Mistify/UpdateSiblingList"
-	Mistify_GetFunctionList_FullMethodName     = "/node.Mistify/GetFunctionList"
-	Mistify_RegisterNewFunction_FullMethodName = "/node.Mistify/RegisterNewFunction"
-	Mistify_CallFunction_FullMethodName        = "/node.Mistify/CallFunction"
+	Mistify_Info_FullMethodName              = "/node.Mistify/Info"
+	Mistify_Register_FullMethodName          = "/node.Mistify/Register"
+	Mistify_UpdateSiblingList_FullMethodName = "/node.Mistify/UpdateSiblingList"
+	Mistify_GetFunctionList_FullMethodName   = "/node.Mistify/GetFunctionList"
+	Mistify_DeployFunction_FullMethodName    = "/node.Mistify/DeployFunction"
+	Mistify_RegisterFunction_FullMethodName  = "/node.Mistify/RegisterFunction"
+	Mistify_CallFunction_FullMethodName      = "/node.Mistify/CallFunction"
 )
 
 // MistifyClient is the client API for Mistify service.
@@ -35,7 +36,8 @@ type MistifyClient interface {
 	Register(ctx context.Context, in *NodeAddress, opts ...grpc.CallOption) (*Empty, error)
 	UpdateSiblingList(ctx context.Context, in *SiblingList, opts ...grpc.CallOption) (*Empty, error)
 	GetFunctionList(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*FunctionList, error)
-	RegisterNewFunction(ctx context.Context, in *RegisterFunction, opts ...grpc.CallOption) (*Empty, error)
+	DeployFunction(ctx context.Context, in *Function, opts ...grpc.CallOption) (*Empty, error)
+	RegisterFunction(ctx context.Context, in *Function, opts ...grpc.CallOption) (*Empty, error)
 	CallFunction(ctx context.Context, in *FunctionCall, opts ...grpc.CallOption) (*FunctionCallResponse, error)
 }
 
@@ -83,9 +85,18 @@ func (c *mistifyClient) GetFunctionList(ctx context.Context, in *Empty, opts ...
 	return out, nil
 }
 
-func (c *mistifyClient) RegisterNewFunction(ctx context.Context, in *RegisterFunction, opts ...grpc.CallOption) (*Empty, error) {
+func (c *mistifyClient) DeployFunction(ctx context.Context, in *Function, opts ...grpc.CallOption) (*Empty, error) {
 	out := new(Empty)
-	err := c.cc.Invoke(ctx, Mistify_RegisterNewFunction_FullMethodName, in, out, opts...)
+	err := c.cc.Invoke(ctx, Mistify_DeployFunction_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *mistifyClient) RegisterFunction(ctx context.Context, in *Function, opts ...grpc.CallOption) (*Empty, error) {
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Mistify_RegisterFunction_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +120,8 @@ type MistifyServer interface {
 	Register(context.Context, *NodeAddress) (*Empty, error)
 	UpdateSiblingList(context.Context, *SiblingList) (*Empty, error)
 	GetFunctionList(context.Context, *Empty) (*FunctionList, error)
-	RegisterNewFunction(context.Context, *RegisterFunction) (*Empty, error)
+	DeployFunction(context.Context, *Function) (*Empty, error)
+	RegisterFunction(context.Context, *Function) (*Empty, error)
 	CallFunction(context.Context, *FunctionCall) (*FunctionCallResponse, error)
 	mustEmbedUnimplementedMistifyServer()
 }
@@ -130,8 +142,11 @@ func (UnimplementedMistifyServer) UpdateSiblingList(context.Context, *SiblingLis
 func (UnimplementedMistifyServer) GetFunctionList(context.Context, *Empty) (*FunctionList, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetFunctionList not implemented")
 }
-func (UnimplementedMistifyServer) RegisterNewFunction(context.Context, *RegisterFunction) (*Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method RegisterNewFunction not implemented")
+func (UnimplementedMistifyServer) DeployFunction(context.Context, *Function) (*Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeployFunction not implemented")
+}
+func (UnimplementedMistifyServer) RegisterFunction(context.Context, *Function) (*Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterFunction not implemented")
 }
 func (UnimplementedMistifyServer) CallFunction(context.Context, *FunctionCall) (*FunctionCallResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CallFunction not implemented")
@@ -221,20 +236,38 @@ func _Mistify_GetFunctionList_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Mistify_RegisterNewFunction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(RegisterFunction)
+func _Mistify_DeployFunction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Function)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(MistifyServer).RegisterNewFunction(ctx, in)
+		return srv.(MistifyServer).DeployFunction(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: Mistify_RegisterNewFunction_FullMethodName,
+		FullMethod: Mistify_DeployFunction_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MistifyServer).RegisterNewFunction(ctx, req.(*RegisterFunction))
+		return srv.(MistifyServer).DeployFunction(ctx, req.(*Function))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Mistify_RegisterFunction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Function)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MistifyServer).RegisterFunction(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Mistify_RegisterFunction_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MistifyServer).RegisterFunction(ctx, req.(*Function))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -281,8 +314,12 @@ var Mistify_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Mistify_GetFunctionList_Handler,
 		},
 		{
-			MethodName: "RegisterNewFunction",
-			Handler:    _Mistify_RegisterNewFunction_Handler,
+			MethodName: "DeployFunction",
+			Handler:    _Mistify_DeployFunction_Handler,
+		},
+		{
+			MethodName: "RegisterFunction",
+			Handler:    _Mistify_RegisterFunction_Handler,
 		},
 		{
 			MethodName: "CallFunction",

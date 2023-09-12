@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,10 @@ import (
 	"os/signal"
 	"strings"
 
+	pb "github.com/OpenFogStack/tinyFaaS/mistify/registry/node"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
 	"github.com/OpenFogStack/tinyFaaS/pkg/docker"
 	"github.com/OpenFogStack/tinyFaaS/pkg/manager"
 	"github.com/OpenFogStack/tinyFaaS/pkg/tfconfig"
@@ -19,8 +24,8 @@ import (
 )
 
 type server struct {
-	ms *manager.ManagementService
-	//rs *registry.RegistryService
+	ms      *manager.ManagementService
+	mistify pb.MistifyClient
 }
 
 func main() {
@@ -181,6 +186,18 @@ func main() {
 	// log.Println("starting registry service")
 	// go rgs.Start()
 
+	// connect to mistify
+	log.Println("connecting to mistify")
+	conn, err := grpc.Dial(
+		fmt.Sprintf("localhost:%d", config.RegistryPort),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	s.mistify = pb.NewMistifyClient(conn)
+
 	// start server
 	log.Println("starting HTTP server")
 	addr := fmt.Sprintf(":%d", config.ConfigPort)
@@ -213,6 +230,29 @@ func (s *server) uploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.Header.Get("X-mistify-bypass") == "" {
+		json, err := json.Marshal(d)
+		if err != nil {
+			log.Printf("failed to marshal function: %v", err)
+			return
+		}
+
+		// register function with registry
+
+		log.Println("registering function with mistify")
+
+		_, err = s.mistify.RegisterFunction(context.Background(), &pb.Function{
+			Name: d.FunctionName,
+			Json: string(json),
+		})
+
+		if err != nil {
+			log.Printf("failed to register function with mistify: %v", err)
+		}
+
+		return
+	}
+
 	log.Println("got request to upload function: Name", d.FunctionName, "Env", d.FunctionEnv, "Threads", d.FunctionThreads, "Bytes", len(d.FunctionZip), "Envs", d.FunctionEnvs)
 
 	envs := make(map[string]string)
@@ -238,7 +278,6 @@ func (s *server) uploadHandler(w http.ResponseWriter, r *http.Request) {
 	// return success
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprint(w, res)
-
 }
 
 func (s *server) deleteHandler(w http.ResponseWriter, r *http.Request) {

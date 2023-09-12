@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
@@ -23,6 +24,15 @@ type RegistryService interface {
 	Start()
 }
 
+type Function struct {
+	Name    string `json:"name"`
+	Threads int    `json:"threads"`
+	Zip     string `json:"zip"`
+	Env     string `json:"env"`
+}
+
+// TODO: remove other node types
+
 type BaseNode struct {
 	pb.UnimplementedMistifyServer
 	self         pb.NodeAddress
@@ -33,6 +43,7 @@ type BaseNode struct {
 	parent       *pb.NodeAddress
 	parentClient pb.MistifyClient
 	config       *tfconfig.TFConfig
+	registry     map[string]string
 }
 
 func (b *BaseNode) Start() {
@@ -63,10 +74,7 @@ func (b *BaseNode) Start() {
 			log.Info("registering with parent node")
 			_, err = b.parentClient.Register(
 				context.Background(),
-				&pb.NodeAddress{
-					Address: b.self.Address,
-					Name:    b.self.Name,
-				},
+				&b.self,
 			)
 			if err != nil {
 				log.Fatalf("failed to register with parent node: %v", err)
@@ -92,10 +100,7 @@ func (b *BaseNode) serve() {
 }
 
 func (b *BaseNode) Info(ctx context.Context, in *pb.Empty) (*pb.NodeAddress, error) {
-	return &pb.NodeAddress{
-		Address: b.self.Address,
-		Name:    b.self.Name,
-	}, nil
+	return &b.self, nil
 }
 
 func (b *BaseNode) UpdateSiblingList(ctx context.Context, in *pb.SiblingList) (*pb.Empty, error) {
@@ -127,10 +132,9 @@ func (b *BaseNode) Register(ctx context.Context, in *pb.NodeAddress) (*pb.Empty,
 		return nil, fmt.Errorf("failed to get info from child %s: %v", in.Address, err)
 	}
 
-	b.children = append(b.children, &pb.NodeAddress{
-		Address: in.Address,
-		Name:    in.Name,
-	})
+	// TODO: handle duplicates
+
+	b.children = append(b.children, in)
 
 	b.childClients = append(b.childClients, client)
 
@@ -221,8 +225,36 @@ func (b *BaseNode) GetFunctionList(ctx context.Context, in *pb.Empty) (*pb.Funct
 	}, nil
 }
 
+func (b *BaseNode) deployToChild(name string) {
+	// TODO: implement adapter mechanism for deployment strategies
+
+	// round robin for now
+
+	child := b.childClients[rand.Intn(len(b.childClients))]
+
+	log.Infof("deploying function %s to child", name)
+
+	if b.registry[name] == "" {
+		log.Warnf("function %s not found in registry", name)
+		return
+	}
+
+	_, err := child.DeployFunction(context.Background(), &pb.Function{
+		Name: name,
+		Json: b.registry[name],
+	})
+	if err != nil {
+		log.Warnf("failed to notify child of new function %s: %v", child, err)
+		// TODO: maybe deploy to other child?
+	}
+}
+
 func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.FunctionCallResponse, error) {
 	log.Debugf("have function call: %+v", in)
+
+	if b.config.Mode == "cloud" {
+		log.Warnf("got function call in cloud mode")
+	}
 
 	node := b.self.ProxyAddress
 
@@ -251,9 +283,16 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 		node = functionNodes[rand.Intn(len(functionNodes))]
 	}
 
+	go func() {
+		if b.config.Mode == "fog" {
+			log.Infof("deploying function %s to children", in.FunctionIdentifier)
+			b.deployToChild(in.FunctionIdentifier)
+		}
+	}()
+
 	log.Infof("calling function %s on node %s", in.FunctionIdentifier, node)
 
-	resp, err := b.callProxy(in.FunctionIdentifier, []byte(in.Data))
+	resp, err := b.callProxy(node, in.FunctionIdentifier, []byte(in.Data))
 
 	if err != nil {
 		log.Errorf("failed to call function: %v", err)
@@ -268,6 +307,8 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 
 func (b *BaseNode) fetchSiblingFunctions() map[string][]string {
 	functions := make(map[string][]string)
+
+	// TODO: this needs to be in parallel and use a tight timeout
 
 	for _, sibling := range b.siblings {
 		conn, err := grpc.Dial(
@@ -288,19 +329,19 @@ func (b *BaseNode) fetchSiblingFunctions() map[string][]string {
 		}
 
 		for _, name := range list.FunctionNames {
-			functions[name] = append(functions[name], sibling.Address)
+			functions[name] = append(functions[name], sibling.ProxyAddress)
 		}
 	}
 
 	return functions
 }
 
-func (b *BaseNode) callProxy(name string, payload []byte) ([]byte, error) {
+func (b *BaseNode) callProxy(node string, name string, payload []byte) ([]byte, error) {
 	client := http.Client{
 		Timeout: 5 * time.Second,
 	}
 
-	req, err := http.NewRequest("POST", fmt.Sprintf("http://localhost:%d/%s", b.config.HTTPPort, name), strings.NewReader(string(payload)))
+	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s/%s", node, name), strings.NewReader(string(payload)))
 	if err != nil {
 		log.Errorf("failed to create request: %v", err)
 		return nil, fmt.Errorf("failed to create request: %v", err)
@@ -320,4 +361,110 @@ func (b *BaseNode) callProxy(name string, payload []byte) ([]byte, error) {
 	}
 
 	return body, nil
+}
+
+func (b *BaseNode) deployFunction(function *Function) error {
+	log.Infof("deploying function %s", function.Name)
+
+	j, err := json.Marshal(function)
+	if err != nil {
+		log.Errorf("failed to marshal function: %v", err)
+		return fmt.Errorf("failed to marshal function: %v", err)
+	}
+
+	req, err := http.NewRequest("POST", fmt.Sprintf("http://localhost:%d/upload", b.config.ConfigPort), strings.NewReader(string(j)))
+	if err != nil {
+		log.Errorf("failed to create request: %v", err)
+		return fmt.Errorf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("X-mistify-bypass", "bypass")
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Errorf("failed to upload function: %v", err)
+		return fmt.Errorf("failed to upload function: %v", err)
+	}
+
+	if res.StatusCode != http.StatusOK {
+		log.Errorf("upload failed with status code %d", res.StatusCode)
+		return fmt.Errorf("upload failed with status code %d", res.StatusCode)
+	}
+
+	return nil
+}
+
+func (b *BaseNode) RegisterFunction(ctx context.Context, in *pb.Function) (*pb.Empty, error) {
+	if b.config.Mode != "cloud" {
+		// forward to parent
+		log.Infof("escalating function registration to parent")
+
+		_, err := b.parentClient.RegisterFunction(context.Background(), in)
+		if err != nil {
+			log.Errorf("failed to escalate function registration: %v", err)
+			return nil, fmt.Errorf("failed to escalate function registration: %v", err)
+		}
+
+		return &pb.Empty{}, nil
+	}
+
+	function := &Function{
+		Name: in.Name,
+	}
+
+	err := json.Unmarshal([]byte(in.Json), function)
+	if err != nil {
+		log.Errorf("failed to unmarshal function: %v", err)
+		return nil, fmt.Errorf("failed to unmarshal function: %v", err)
+	}
+
+	err = b.deployFunction(function)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deploy function: %v", err)
+	}
+
+	b.mutex.Lock()
+	b.registry[in.Name] = function.Name
+	b.mutex.Unlock()
+
+	// deploy function to fog nodes
+	for _, child := range b.childClients {
+		_, err := child.DeployFunction(context.Background(), &pb.Function{
+			Name: in.Name,
+			Json: in.Json,
+		})
+		if err != nil {
+			log.Warnf("failed to notify child of new function %s: %v", child, err)
+		}
+	}
+
+	return &pb.Empty{}, nil
+}
+
+func (b *BaseNode) DeployFunction(ctx context.Context, in *pb.Function) (*pb.Empty, error) {
+	if b.config.Mode == "cloud" {
+		log.Warnf("got function deployment request in cloud mode")
+		return nil, fmt.Errorf("got function deployment request in cloud mode")
+	}
+
+	var f Function
+
+	err := json.Unmarshal([]byte(in.Json), &f)
+	if err != nil {
+		log.Errorf("failed to unmarshal function: %v", err)
+		return nil, fmt.Errorf("failed to unmarshal function: %v", err)
+	}
+
+	err = b.deployFunction(&f)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deploy function: %v", err)
+	}
+
+	if b.config.Mode == "fog" {
+		b.mutex.Lock()
+		b.registry[f.Name] = in.Json
+		b.mutex.Unlock()
+	}
+
+	return &pb.Empty{}, nil
 }

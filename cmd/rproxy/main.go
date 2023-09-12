@@ -38,7 +38,7 @@ func main() {
 		log.Fatalf("Error unmarshalling the config file: %v", err)
 	}
 
-	r := rproxy.New()
+	r := rproxy.New(&config)
 
 	// CoAP
 	coapAddr := fmt.Sprintf("%s:%d", config.RProxyListenAddress, config.COAPPort)

@@ -18,6 +18,7 @@ func Start(r *rproxy.RProxy, listenAddr string) {
 			log.Printf("path: %s", m.PathString())
 
 			async := false
+			bypass := false
 
 			p := m.PathString()
 
@@ -25,9 +26,9 @@ func Start(r *rproxy.RProxy, listenAddr string) {
 				p = p[1:]
 			}
 
-			log.Printf("have request for path: %s (async: %v)", p, async)
+			log.Printf("have request for path: %s (async: %v, bypass: %v)", p, async, bypass)
 
-			s, res := r.Call(p, m.Payload, async)
+			s, res := r.Call(p, m.Payload, async, bypass)
 
 			mes := &coap.Message{
 				Type:      coap.Acknowledgement,

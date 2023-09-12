@@ -13,4 +13,4 @@ ID = "cloud"
 Mode = "cloud"
 
 RegistryPort = 8082
-Address = "localhost:8082"
+Host = "localhost"

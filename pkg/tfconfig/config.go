@@ -16,7 +16,7 @@ type TFConfig struct {
 	ID      string
 
 	Mode          string
-	Address       string
+	Host          string
 	ParentAddress string
 	RegistryPort  int
 }
@@ -36,7 +36,7 @@ func DefaultConfig() TFConfig {
 		ID:      uuid.NewString(),
 
 		Mode:          "edge",
-		Address:       "",
+		Host:          "",
 		ParentAddress: "",
 		RegistryPort:  8082,
 	}

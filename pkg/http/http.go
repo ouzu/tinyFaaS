@@ -20,8 +20,9 @@ func Start(r *rproxy.RProxy, listenAddr string) {
 		}
 
 		async := req.Header.Get("X-tinyFaaS-Async") != ""
+		bypass := req.Header.Get("X-mistify-bypass") != ""
 
-		log.Printf("have request for path: %s (async: %v)", p, false)
+		log.Printf("have request for path: %s (async: %v, bypass: %v)", p, async, bypass)
 
 		req_body, err := io.ReadAll(req.Body)
 
@@ -31,7 +32,7 @@ func Start(r *rproxy.RProxy, listenAddr string) {
 			return
 		}
 
-		s, res := r.Call(p, req_body, async)
+		s, res := r.Call(p, req_body, async, bypass)
 
 		switch s {
 		case rproxy.StatusOK:

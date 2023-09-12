@@ -2,19 +2,22 @@ syntax = "proto3";
 
 package node;
 
-option go_package = "github.com/OpenFogStack/tinyFaaS/pkg/registry/node";
+option go_package = "github.com/OpenFogStack/tinyFaaS/mistify/registry/node";
 
-service TFRegistry {
+service Mistify {
     rpc Info(Empty) returns (NodeAddress);
     rpc Register(NodeAddress) returns (Empty);
     rpc UpdateSiblingList(SiblingList) returns (Empty);
     rpc GetFunctionList(Empty) returns (FunctionList);
     rpc RegisterNewFunction(RegisterFunction) returns (Empty);
+    rpc CallFunction(FunctionCall) returns (FunctionCallResponse);
 }
 
 message NodeAddress {
-    string address = 1;
-    string name = 2;
+    string name = 1;
+    string address = 2;
+    string managerAddress = 3;
+    string proxyAddress = 4;
 }
 
 message SiblingList {
@@ -31,3 +34,10 @@ message RegisterFunction {
     string function_name = 1;
 }
 
+message FunctionCall {
+    string functionIdentifier = 1;
+    string data = 2;
+    bool async = 3;
+}
+  
+message FunctionCallResponse { string response = 1; }

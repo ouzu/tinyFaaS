@@ -12,13 +12,13 @@ import (
 
 	"github.com/OpenFogStack/tinyFaaS/pkg/docker"
 	"github.com/OpenFogStack/tinyFaaS/pkg/manager"
-	"github.com/OpenFogStack/tinyFaaS/pkg/registry"
 	"github.com/OpenFogStack/tinyFaaS/pkg/tfconfig"
 	"github.com/pelletier/go-toml/v2"
 )
 
 type server struct {
 	ms *manager.ManagementService
+	//rs *registry.RegistryService
 }
 
 func main() {
@@ -56,21 +56,23 @@ func main() {
 		log.Fatalf("invalid backend %s", config.Backend)
 	}
 
-	var rgs registry.RegistryService
+	/*
+		var rgs registry.RegistryService
 
-	switch config.Mode {
-	case "edge":
-		log.Println("running in edge mode")
-		rgs = registry.NewEdgeNode(config.ID, config.Address, config.RegistryPort, config.ParentAddress)
-	case "fog":
-		log.Println("running in fog mode")
-		rgs = registry.NewFogNode(config.ID, config.Address, config.RegistryPort, config.ParentAddress)
-	case "cloud":
-		log.Println("running in cloud mode")
-		rgs = registry.NewRootNode(config.ID, config.Address, config.RegistryPort)
-	default:
-		log.Fatalf("invalid mode %s", config.Mode)
-	}
+		switch config.Mode {
+		case "edge":
+			log.Println("running in edge mode")
+			rgs = registry.NewEdgeNode(config.ID, config.Address, config.RegistryPort, config.ParentAddress)
+		case "fog":
+			log.Println("running in fog mode")
+			rgs = registry.NewFogNode(config.ID, config.Address, config.RegistryPort, config.ParentAddress)
+		case "cloud":
+			log.Println("running in cloud mode")
+			rgs = registry.NewRootNode(config.ID, config.Address, config.RegistryPort)
+		default:
+			log.Fatalf("invalid mode %s", config.Mode)
+		}
+	*/
 
 	ports := map[string]int{
 		"coap": config.COAPPort,
@@ -134,6 +136,7 @@ func main() {
 
 	s := &server{
 		ms: ms,
+		//rs: &rgs,
 	}
 
 	// create handlers
@@ -173,8 +176,8 @@ func main() {
 	}()
 
 	// start registry service
-	log.Println("starting registry service")
-	go rgs.Start()
+	// log.Println("starting registry service")
+	// go rgs.Start()
 
 	// start server
 	log.Println("starting HTTP server")

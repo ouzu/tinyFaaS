@@ -13,5 +13,5 @@ ID = "fog_a"
 Mode = "fog"
 
 RegistryPort = 8282
-Address = "localhost:8282"
+Host = "localhost"
 ParentAddress = "localhost:8082"

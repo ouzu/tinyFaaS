@@ -13,5 +13,5 @@ ID = "edge_b"
 Mode = "edge"
 
 RegistryPort = 8182
-Address = "localhost:8182"
+Host = "localhost"
 ParentAddress = "localhost:8282"

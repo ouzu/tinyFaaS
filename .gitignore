@@ -2,7 +2,11 @@
 /rproxy
 /tmp
 
+/configs
+
 /tfcli
+/.direnv
+/result
 
 # Created by https://www.toptal.com/developers/gitignore/api/python,node,go,visualstudiocode
 # Edit at https://www.toptal.com/developers/gitignore?templates=python,node,go,visualstudiocode

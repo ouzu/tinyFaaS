@@ -80,7 +80,8 @@ func (db *DockerBackend) Create(name string, env string, threads int, filedir st
 		handlerIPs: make([]string, 0, threads),
 	}
 
-	dh.uniqueName = name + "-" + uuid.String()
+	dh.uniqueName = fmt.Sprintf("%s-%s-%s", db.tinyFaaSID, name, uuid.String())
+
 	log.Println("creating function", name, "with unique name", dh.uniqueName)
 
 	// make a folder for the function

@@ -33,17 +33,40 @@ type Function struct {
 
 // TODO: remove other node types
 
+type NodeConnection struct {
+	Address *pb.NodeAddress
+	Client  pb.MistifyClient
+}
+
+func NCtoAddr(nc []NodeConnection) []*pb.NodeAddress {
+	var addresses []*pb.NodeAddress
+
+	for _, c := range nc {
+		addresses = append(addresses, c.Address)
+	}
+
+	return addresses
+}
+
+func NCtoNames(nc []NodeConnection) []string {
+	var names []string
+
+	for _, c := range nc {
+		names = append(names, c.Address.Name)
+	}
+
+	return names
+}
+
 type BaseNode struct {
 	pb.UnimplementedMistifyServer
-	self         pb.NodeAddress
-	children     []*pb.NodeAddress
-	childClients []pb.MistifyClient
-	siblings     []*pb.NodeAddress
-	mutex        sync.RWMutex
-	parent       *pb.NodeAddress
-	parentClient pb.MistifyClient
-	config       *tfconfig.TFConfig
-	registry     map[string]string
+	self     NodeConnection
+	children []NodeConnection
+	siblings []NodeConnection
+	mutex    sync.RWMutex
+	parent   NodeConnection
+	config   *tfconfig.TFConfig
+	registry map[string]string
 }
 
 func (b *BaseNode) Start() {
@@ -58,10 +81,10 @@ func (b *BaseNode) Start() {
 			if err != nil {
 				log.Fatalf("failed to dial: %v", err)
 			}
-			b.parentClient = pb.NewMistifyClient(conn)
+			b.parent.Client = pb.NewMistifyClient(conn)
 
 			log.Info("getting info from parent node")
-			info, err := b.parentClient.Info(
+			info, err := b.parent.Client.Info(
 				context.Background(),
 				&pb.Empty{},
 			)
@@ -69,12 +92,12 @@ func (b *BaseNode) Start() {
 				log.Fatalf("failed to get info from parent node: %v", err)
 			}
 
-			b.parent = info
+			b.parent.Address = info
 
 			log.Info("registering with parent node")
-			_, err = b.parentClient.Register(
+			_, err = b.parent.Client.Register(
 				context.Background(),
-				&b.self,
+				b.self.Address,
 			)
 			if err != nil {
 				log.Fatalf("failed to register with parent node: %v", err)
@@ -93,6 +116,21 @@ func (b *BaseNode) serve() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		// set connection to self
+		conn, err := grpc.Dial(
+			fmt.Sprintf("localhost:%d", b.config.RegistryPort),
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		if err != nil {
+			log.Fatalf("failed to dial: %v", err)
+		}
+		b.mutex.Lock()
+		defer b.mutex.Unlock()
+		b.self.Client = pb.NewMistifyClient(conn)
+	}()
+
 	var opts []grpc.ServerOption
 	grpcServer := grpc.NewServer(opts...)
 	pb.RegisterMistifyServer(grpcServer, b)
@@ -100,15 +138,30 @@ func (b *BaseNode) serve() {
 }
 
 func (b *BaseNode) Info(ctx context.Context, in *pb.Empty) (*pb.NodeAddress, error) {
-	return &b.self, nil
+	return b.self.Address, nil
 }
 
 func (b *BaseNode) UpdateSiblingList(ctx context.Context, in *pb.SiblingList) (*pb.Empty, error) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
-	b.siblings = in.Addresses
-	log.Infof("new sibling list: %+v", b.siblings)
+	// TODO: query new siblings only
+
+	b.siblings = make([]NodeConnection, len(in.Addresses))
+	for i, address := range in.Addresses {
+		conn, err := grpc.Dial(
+			address.Address,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		if err != nil {
+			log.Warnf("failed to dial %s: %v", address.Address, err)
+		}
+
+		b.siblings[i].Address = address
+		b.siblings[i].Client = pb.NewMistifyClient(conn)
+	}
+
+	log.Infof("new sibling list: %+v", NCtoNames(b.siblings))
 
 	return &pb.Empty{}, nil
 }
@@ -134,9 +187,10 @@ func (b *BaseNode) Register(ctx context.Context, in *pb.NodeAddress) (*pb.Empty,
 
 	// TODO: handle duplicates
 
-	b.children = append(b.children, in)
-
-	b.childClients = append(b.childClients, client)
+	b.children = append(b.children, NodeConnection{
+		Address: in,
+		Client:  client,
+	})
 
 	go func() {
 		time.Sleep(5 * time.Second)
@@ -151,19 +205,18 @@ func (b *BaseNode) Register(ctx context.Context, in *pb.NodeAddress) (*pb.Empty,
 
 				// remove child
 				for i, child := range b.children {
-					if child.Address == in.Address {
+					if child.Address.Address == in.Address {
 						b.children = append(b.children[:i], b.children[i+1:]...)
-						b.childClients = append(b.childClients[:i], b.childClients[i+1:]...)
 						break
 					}
 				}
 
 				// notify other children
-				for _, child := range b.childClients {
+				for _, child := range b.children {
 					log.Infof("notifying child %s of leaving node %s", child, in.Address)
-					_, err := child.UpdateSiblingList(
+					_, err := child.Client.UpdateSiblingList(
 						context.Background(),
-						&pb.SiblingList{Addresses: b.children},
+						&pb.SiblingList{Addresses: NCtoAddr(b.children)},
 					)
 					if err != nil {
 						log.Infof("failed to notify child of leaving node %s: %v", child, err)
@@ -178,13 +231,13 @@ func (b *BaseNode) Register(ctx context.Context, in *pb.NodeAddress) (*pb.Empty,
 	}()
 
 	// log new child list
-	log.Infof("new child list: %+v", b.children)
+	log.Infof("new child list: %+v", NCtoNames(b.children))
 
 	// notify children
-	for _, child := range b.childClients {
-		_, err := child.UpdateSiblingList(
+	for _, child := range b.children {
+		_, err := child.Client.UpdateSiblingList(
 			context.Background(),
-			&pb.SiblingList{Addresses: b.children},
+			&pb.SiblingList{Addresses: NCtoAddr(b.children)},
 		)
 		if err != nil {
 			log.Warnf("failed to notify child of new node %s: %v", child, err)
@@ -230,21 +283,21 @@ func (b *BaseNode) deployToChild(name string) {
 
 	// round robin for now
 
-	child := b.childClients[rand.Intn(len(b.childClients))]
+	child := b.children[rand.Intn(len(b.children))]
 
-	log.Infof("deploying function %s to child", name)
+	log.Infof("deploying function %s to child %s", name, child.Address.Name)
 
 	if b.registry[name] == "" {
 		log.Warnf("function %s not found in registry", name)
 		return
 	}
 
-	_, err := child.DeployFunction(context.Background(), &pb.Function{
+	_, err := child.Client.DeployFunction(context.Background(), &pb.Function{
 		Name: name,
 		Json: b.registry[name],
 	})
 	if err != nil {
-		log.Warnf("failed to notify child of new function %s: %v", child, err)
+		log.Warnf("failed to notify child of new function %s: %v", child.Address.Name, err)
 		// TODO: maybe deploy to other child?
 	}
 }
@@ -256,7 +309,7 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 		log.Warnf("got function call in cloud mode")
 	}
 
-	node := b.self.ProxyAddress
+	node := b.self
 
 	if b.config.Mode == "edge" {
 		nodes := b.fetchSiblingFunctions()
@@ -268,7 +321,7 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 			log.Warnf("no sibling functions found for %s", in.FunctionIdentifier)
 			log.Infof("escalating call to parent")
 
-			resp, err := b.parentClient.CallFunction(context.Background(), in)
+			resp, err := b.parent.Client.CallFunction(context.Background(), in)
 			if err != nil {
 				log.Errorf("failed to escalate call: %v", err)
 				return nil, fmt.Errorf("failed to escalate call: %v", err)
@@ -290,9 +343,9 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 		}
 	}()
 
-	log.Infof("calling function %s on node %s", in.FunctionIdentifier, node)
+	log.Infof("calling function %s on node %s", in.FunctionIdentifier, node.Address.Name)
 
-	resp, err := b.callProxy(node, in.FunctionIdentifier, []byte(in.Data))
+	resp, err := b.callProxy(node.Address.ProxyAddress, in.FunctionIdentifier, []byte(in.Data))
 
 	if err != nil {
 		log.Errorf("failed to call function: %v", err)
@@ -305,31 +358,20 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 	}, nil
 }
 
-func (b *BaseNode) fetchSiblingFunctions() map[string][]string {
-	functions := make(map[string][]string)
+func (b *BaseNode) fetchSiblingFunctions() map[string][]NodeConnection {
+	functions := make(map[string][]NodeConnection)
 
 	// TODO: this needs to be in parallel and use a tight timeout
 
 	for _, sibling := range b.siblings {
-		conn, err := grpc.Dial(
-			sibling.Address,
-			grpc.WithTransportCredentials(insecure.NewCredentials()),
-		)
-		if err != nil {
-			log.Errorf("failed to dial: %v", err)
-			return nil
-		}
-
-		client := pb.NewMistifyClient(conn)
-
-		list, err := client.GetFunctionList(context.Background(), &pb.Empty{})
+		list, err := sibling.Client.GetFunctionList(context.Background(), &pb.Empty{})
 		if err != nil {
 			log.Errorf("failed to get function list from sibling %s: %v", sibling.Address, err)
 			return nil
 		}
 
 		for _, name := range list.FunctionNames {
-			functions[name] = append(functions[name], sibling.ProxyAddress)
+			functions[name] = append(functions[name], sibling)
 		}
 	}
 
@@ -399,7 +441,7 @@ func (b *BaseNode) RegisterFunction(ctx context.Context, in *pb.Function) (*pb.E
 		// forward to parent
 		log.Infof("escalating function registration to parent")
 
-		_, err := b.parentClient.RegisterFunction(context.Background(), in)
+		_, err := b.parent.Client.RegisterFunction(context.Background(), in)
 		if err != nil {
 			log.Errorf("failed to escalate function registration: %v", err)
 			return nil, fmt.Errorf("failed to escalate function registration: %v", err)
@@ -428,13 +470,13 @@ func (b *BaseNode) RegisterFunction(ctx context.Context, in *pb.Function) (*pb.E
 	b.mutex.Unlock()
 
 	// deploy function to fog nodes
-	for _, child := range b.childClients {
-		_, err := child.DeployFunction(context.Background(), &pb.Function{
+	for _, child := range b.children {
+		_, err := child.Client.DeployFunction(context.Background(), &pb.Function{
 			Name: in.Name,
 			Json: in.Json,
 		})
 		if err != nil {
-			log.Warnf("failed to notify child of new function %s: %v", child, err)
+			log.Warnf("failed to notify child of new function %s: %v", child.Address.Name, err)
 		}
 	}
 

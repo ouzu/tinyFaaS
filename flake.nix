@@ -12,5 +12,6 @@
           tinyFaaS = import ./package.nix { inherit pkgs; };
           default = self.packages.${system}.tinyFaaS;
         };
+        nixosModules.tinyFaaS = import ./module.nix { inherit pkgs; };
       });
 }

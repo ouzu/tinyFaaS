@@ -505,15 +505,24 @@ func (b *BaseNode) RegisterFunction(ctx context.Context, in *pb.Function) (*pb.E
 	b.mutex.Unlock()
 
 	// deploy function to fog nodes
+	wg := sync.WaitGroup{}
+
 	for _, child := range b.children {
-		_, err := child.Client.DeployFunction(context.Background(), &pb.Function{
-			Name: in.Name,
-			Json: in.Json,
-		})
-		if err != nil {
-			log.Warnf("failed to notify child of new function %s: %v", child.Address.Name, err)
-		}
+		c := child
+		wg.Add(1)
+		go func() {
+			_, err := c.Client.DeployFunction(context.Background(), &pb.Function{
+				Name: in.Name,
+				Json: in.Json,
+			})
+			if err != nil {
+				log.Warnf("failed to notify child of new function %s: %v", c.Address.Name, err)
+			}
+			wg.Done()
+		}()
 	}
+
+	wg.Wait()
 
 	return &pb.Empty{}, nil
 }

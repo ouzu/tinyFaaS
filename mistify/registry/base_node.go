@@ -131,7 +131,7 @@ func (b *BaseNode) serve() {
 	log.Infof("starting node %s", b.self.Address.Name)
 	log.Debugf("starting registry server on port %d", b.config.RegistryPort)
 
-	lis, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", b.config.RegistryPort))
+	lis, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", b.config.RegistryPort))
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}

@@ -63,24 +63,6 @@ func main() {
 		log.Fatalf("invalid backend %s", config.Backend)
 	}
 
-	/*
-		var rgs registry.RegistryService
-
-		switch config.Mode {
-		case "edge":
-			log.Println("running in edge mode")
-			rgs = registry.NewEdgeNode(config.ID, config.Address, config.RegistryPort, config.ParentAddress)
-		case "fog":
-			log.Println("running in fog mode")
-			rgs = registry.NewFogNode(config.ID, config.Address, config.RegistryPort, config.ParentAddress)
-		case "cloud":
-			log.Println("running in cloud mode")
-			rgs = registry.NewRootNode(config.ID, config.Address, config.RegistryPort)
-		default:
-			log.Fatalf("invalid mode %s", config.Mode)
-		}
-	*/
-
 	ports := map[string]int{
 		"coap": config.COAPPort,
 		"http": config.HTTPPort,
@@ -94,14 +76,6 @@ func main() {
 		config.RProxyConfigPort,
 		tfBackend,
 	)
-
-	/*
-		rproxyArgs := []string{fmt.Sprintf("%s:%d", config.RProxyListenAddress, config.RProxyConfigPort)}
-
-		for prot, port := range ports {
-			rproxyArgs = append(rproxyArgs, fmt.Sprintf("%s:%s:%d", prot, config.RProxyListenAddress, port))
-		}
-	*/
 
 	rproxyArgs := []string{os.Args[1]}
 
@@ -143,7 +117,6 @@ func main() {
 
 	s := &server{
 		ms: ms,
-		//rs: &rgs,
 	}
 
 	// create handlers
@@ -181,10 +154,6 @@ func main() {
 
 		os.Exit(0)
 	}()
-
-	// start registry service
-	// log.Println("starting registry service")
-	// go rgs.Start()
 
 	// connect to mistify
 	log.Println("connecting to mistify")

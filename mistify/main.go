@@ -49,13 +49,13 @@ func main() {
 
 	switch config.Mode {
 	case "cloud":
-		log.Info("running in cloud mode")
+		log.Debug("running in cloud mode")
 		rgs = registry.NewRootNode(&config)
 	case "fog":
-		log.Info("running in fog mode")
+		log.Debug("running in fog mode")
 		rgs = registry.NewFogNode(&config)
 	case "edge":
-		log.Info("running in edge mode")
+		log.Debug("running in edge mode")
 		rgs = registry.NewEdgeNode(&config)
 	default:
 		log.Fatalf("invalid mode %s", config.Mode)

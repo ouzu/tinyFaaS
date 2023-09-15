@@ -60,20 +60,39 @@ func NCtoNames(nc []NodeConnection) []string {
 
 type BaseNode struct {
 	pb.UnimplementedMistifyServer
-	self     NodeConnection
-	children []NodeConnection
-	siblings []NodeConnection
-	mutex    sync.RWMutex
-	parent   NodeConnection
-	config   *tfconfig.TFConfig
-	registry map[string]string
+	self            NodeConnection
+	children        []NodeConnection
+	siblings        []NodeConnection
+	mutex           sync.RWMutex
+	parent          NodeConnection
+	config          *tfconfig.TFConfig
+	registry        map[string]string
+	connectionCount int
+}
+
+func (b *BaseNode) increaseConnectionCount() {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	b.connectionCount++
+
+	log.Debugf("connection count increased to %d", b.connectionCount)
+}
+
+func (b *BaseNode) decreaseConnectionCount() {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	b.connectionCount--
+
+	log.Debugf("connection count decreased to %d", b.connectionCount)
 }
 
 func (b *BaseNode) Start() {
 	go func() {
 		time.Sleep(100 * time.Millisecond)
 		if b.config.ParentAddress != "" {
-			log.Info("connecting to parent node")
+			log.Debug("connecting to parent node")
 			conn, err := grpc.Dial(
 				b.config.ParentAddress,
 				grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -83,7 +102,7 @@ func (b *BaseNode) Start() {
 			}
 			b.parent.Client = pb.NewMistifyClient(conn)
 
-			log.Info("getting info from parent node")
+			log.Debug("getting info from parent node")
 			info, err := b.parent.Client.Info(
 				context.Background(),
 				&pb.Empty{},
@@ -94,7 +113,7 @@ func (b *BaseNode) Start() {
 
 			b.parent.Address = info
 
-			log.Info("registering with parent node")
+			log.Infof("registering with parent %s", b.parent.Address.Name)
 			_, err = b.parent.Client.Register(
 				context.Background(),
 				b.self.Address,
@@ -109,7 +128,8 @@ func (b *BaseNode) Start() {
 }
 
 func (b *BaseNode) serve() {
-	log.Infof("starting registry server on port %d", b.config.RegistryPort)
+	log.Infof("starting node %s", b.self.Address.Name)
+	log.Debugf("starting registry server on port %d", b.config.RegistryPort)
 
 	lis, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", b.config.RegistryPort))
 	if err != nil {
@@ -140,6 +160,41 @@ func (b *BaseNode) serve() {
 func (b *BaseNode) Info(ctx context.Context, in *pb.Empty) (*pb.NodeAddress, error) {
 	return b.self.Address, nil
 }
+
+func (b *BaseNode) GetFunctionList(ctx context.Context, in *pb.Empty) (*pb.FunctionList, error) {
+	managerAddress := fmt.Sprintf("localhost:%d", b.config.ConfigPort)
+
+	// make http call to the list endpoint
+	resp, err := http.Get(fmt.Sprintf("http://%s/list", managerAddress))
+	if err != nil {
+		log.Errorf("failed to get function list: %v", err)
+		return nil, fmt.Errorf("failed to get function list: %v", err)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Errorf("failed to read response body: %v", err)
+		return nil, fmt.Errorf("failed to read response body: %v", err)
+	}
+
+	names := strings.Split(string(body), "\n")
+
+	// remove empty strings
+	for i := 0; i < len(names); i++ {
+		if names[i] == "" {
+			names = append(names[:i], names[i+1:]...)
+			i--
+		}
+	}
+
+	return &pb.FunctionList{
+		FunctionNames: names,
+	}, nil
+}
+
+// ! **********************************
+// ! CODE FOR MAINTAINING THE NODE TREE
+// ! **********************************
 
 func (b *BaseNode) UpdateSiblingList(ctx context.Context, in *pb.SiblingList) (*pb.Empty, error) {
 	b.mutex.Lock()
@@ -247,63 +302,15 @@ func (b *BaseNode) Register(ctx context.Context, in *pb.NodeAddress) (*pb.Empty,
 	return &pb.Empty{}, nil
 }
 
-func (b *BaseNode) GetFunctionList(ctx context.Context, in *pb.Empty) (*pb.FunctionList, error) {
-	managerAddress := fmt.Sprintf("localhost:%d", b.config.ConfigPort)
-
-	// make http call to the list endpoint
-	resp, err := http.Get(fmt.Sprintf("http://%s/list", managerAddress))
-	if err != nil {
-		log.Errorf("failed to get function list: %v", err)
-		return nil, fmt.Errorf("failed to get function list: %v", err)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Errorf("failed to read response body: %v", err)
-		return nil, fmt.Errorf("failed to read response body: %v", err)
-	}
-
-	names := strings.Split(string(body), "\n")
-
-	// remove empty strings
-	for i := 0; i < len(names); i++ {
-		if names[i] == "" {
-			names = append(names[:i], names[i+1:]...)
-			i--
-		}
-	}
-
-	return &pb.FunctionList{
-		FunctionNames: names,
-	}, nil
-}
-
-func (b *BaseNode) deployToChild(name string) {
-	// TODO: implement adapter mechanism for deployment strategies
-
-	// round robin for now
-
-	child := b.children[rand.Intn(len(b.children))]
-
-	log.Infof("deploying function %s to child %s", name, child.Address.Name)
-
-	if b.registry[name] == "" {
-		log.Warnf("function %s not found in registry", name)
-		return
-	}
-
-	_, err := child.Client.DeployFunction(context.Background(), &pb.Function{
-		Name: name,
-		Json: b.registry[name],
-	})
-	if err != nil {
-		log.Warnf("failed to notify child of new function %s: %v", child.Address.Name, err)
-		// TODO: maybe deploy to other child?
-	}
-}
+// ! ********************************
+// ! CODE FOR MANAGING FUNCTION CALLS
+// ! ********************************
 
 func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.FunctionCallResponse, error) {
 	log.Debugf("have function call: %+v", in)
+
+	go b.increaseConnectionCount()
+	defer b.decreaseConnectionCount()
 
 	if b.config.Mode == "cloud" {
 		log.Warnf("got function call in cloud mode")
@@ -405,6 +412,34 @@ func (b *BaseNode) callProxy(node string, name string, payload []byte) ([]byte, 
 	return body, nil
 }
 
+// ! *************************************
+// ! CODE FOR MANAGING FUNCTION DEPLOYMENT
+// ! *************************************
+
+func (b *BaseNode) deployToChild(name string) {
+	// TODO: implement adapter mechanism for deployment strategies
+
+	// round robin for now
+
+	child := b.children[rand.Intn(len(b.children))]
+
+	log.Infof("deploying function %s to child %s", name, child.Address.Name)
+
+	if b.registry[name] == "" {
+		log.Warnf("function %s not found in registry", name)
+		return
+	}
+
+	_, err := child.Client.DeployFunction(context.Background(), &pb.Function{
+		Name: name,
+		Json: b.registry[name],
+	})
+	if err != nil {
+		log.Warnf("failed to notify child of new function %s: %v", child.Address.Name, err)
+		// TODO: maybe deploy to other child?
+	}
+}
+
 func (b *BaseNode) deployFunction(function *Function) error {
 	log.Infof("deploying function %s", function.Name)
 
@@ -483,6 +518,32 @@ func (b *BaseNode) RegisterFunction(ctx context.Context, in *pb.Function) (*pb.E
 	return &pb.Empty{}, nil
 }
 
+func (b *BaseNode) deployToRelevantChildren(name string) {
+	// get all children which have the function
+	for _, child := range b.children {
+		// list functions
+		list, err := child.Client.GetFunctionList(context.Background(), &pb.Empty{})
+		if err != nil {
+			log.Errorf("failed to get function list from child %s: %v", child.Address, err)
+			continue
+		}
+
+		// check if function is in list
+		for _, n := range list.FunctionNames {
+			if n == name {
+				// deploy function
+				_, err := child.Client.DeployFunction(context.Background(), &pb.Function{
+					Name: name,
+					Json: b.registry[name],
+				})
+				if err != nil {
+					log.Warnf("failed to notify child of updated function %s: %v", child.Address.Name, err)
+				}
+			}
+		}
+	}
+}
+
 func (b *BaseNode) DeployFunction(ctx context.Context, in *pb.Function) (*pb.Empty, error) {
 	if b.config.Mode == "cloud" {
 		log.Warnf("got function deployment request in cloud mode")
@@ -506,7 +567,11 @@ func (b *BaseNode) DeployFunction(ctx context.Context, in *pb.Function) (*pb.Emp
 		b.mutex.Lock()
 		b.registry[f.Name] = in.Json
 		b.mutex.Unlock()
+
+		go b.deployToRelevantChildren(f.Name)
 	}
+
+	// TODO: edge nodes should maybe remove deployted functions when not used for a while
 
 	return &pb.Empty{}, nil
 }

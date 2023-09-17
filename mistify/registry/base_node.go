@@ -339,7 +339,6 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 
 		// TODO: implement adapter mechanism for load balancing strategies
 
-		// round robin for now
 		node = functionNodes[rand.Intn(len(functionNodes))]
 	}
 
@@ -419,7 +418,10 @@ func (b *BaseNode) callProxy(node string, name string, payload []byte) ([]byte, 
 func (b *BaseNode) deployToChild(name string) {
 	// TODO: implement adapter mechanism for deployment strategies
 
-	// round robin for now
+	if len(b.children) == 0 {
+		log.Error("no children to deploy to")
+		return
+	}
 
 	child := b.children[rand.Intn(len(b.children))]
 

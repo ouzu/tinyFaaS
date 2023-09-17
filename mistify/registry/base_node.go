@@ -222,6 +222,11 @@ func (b *BaseNode) UpdateSiblingList(ctx context.Context, in *pb.SiblingList) (*
 }
 
 func (b *BaseNode) Register(ctx context.Context, in *pb.NodeAddress) (*pb.Empty, error) {
+	if b.config.Mode == "edge" {
+		log.Warnf("got registration request in edge mode")
+		return nil, fmt.Errorf("edge nodes cannot accept registrations")
+	}
+
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 

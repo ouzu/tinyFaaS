@@ -245,50 +245,19 @@ func (b *BaseNode) Register(ctx context.Context, in *pb.NodeAddress) (*pb.Empty,
 		return nil, fmt.Errorf("failed to get info from child %s: %v", in.Address, err)
 	}
 
-	// TODO: handle duplicates
+	// check for duplicates
+	for i, child := range b.children {
+		if child.Address.Name == in.Name {
+			log.Warnf("duplicate child %s", in.Name)
+			b.children = append(b.children[:i], b.children[i+1:]...)
+			break
+		}
+	}
 
 	b.children = append(b.children, NodeConnection{
 		Address: in,
 		Client:  client,
 	})
-
-	go func() {
-		time.Sleep(5 * time.Second)
-		// heartbeat
-		for {
-			_, err := client.Info(context.Background(), &pb.Empty{})
-			if err != nil {
-				log.Warnf("failed to get info from child %s: %v", in.Address, err)
-
-				b.mutex.Lock()
-				defer b.mutex.Unlock()
-
-				// remove child
-				for i, child := range b.children {
-					if child.Address.Address == in.Address {
-						b.children = append(b.children[:i], b.children[i+1:]...)
-						break
-					}
-				}
-
-				// notify other children
-				for _, child := range b.children {
-					log.Infof("notifying child %s of leaving node %s", child, in.Address)
-					_, err := child.Client.UpdateSiblingList(
-						context.Background(),
-						&pb.SiblingList{Addresses: NCtoAddr(b.children)},
-					)
-					if err != nil {
-						log.Infof("failed to notify child of leaving node %s: %v", child, err)
-					}
-				}
-
-				return
-			}
-
-			time.Sleep(5 * time.Second)
-		}
-	}()
 
 	// log new child list
 	log.Infof("new child list: %+v", NCtoNames(b.children))

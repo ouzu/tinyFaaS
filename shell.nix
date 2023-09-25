@@ -10,6 +10,10 @@ mkShell {
 
     tcpdump
     wireshark
+
+    grpc-tools
+    protoc-gen-go
+    protoc-gen-go-grpc
   ];
 
   shellHook = ''

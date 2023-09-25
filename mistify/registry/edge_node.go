@@ -24,7 +24,8 @@ func NewEdgeNode(config *tfconfig.TFConfig) *EdgeNode {
 				},
 				nil,
 			},
-			config: config,
+			config:            config,
+			selectionStrategy: &LeastBusyStrategy{},
 		},
 	}
 }

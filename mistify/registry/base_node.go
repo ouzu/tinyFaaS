@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"net/http"
 	"strings"
@@ -30,8 +29,6 @@ type Function struct {
 	Zip     string `json:"zip"`
 	Env     string `json:"env"`
 }
-
-// TODO: remove other node types
 
 type NodeConnection struct {
 	Address *pb.NodeAddress
@@ -58,16 +55,82 @@ func NCtoNames(nc []NodeConnection) []string {
 	return names
 }
 
+// TODO: remove other node types
+
 type BaseNode struct {
 	pb.UnimplementedMistifyServer
-	self            NodeConnection
-	children        []NodeConnection
-	siblings        []NodeConnection
-	mutex           sync.RWMutex
-	parent          NodeConnection
-	config          *tfconfig.TFConfig
-	registry        map[string]string
-	connectionCount int
+	self              NodeConnection
+	children          []NodeConnection
+	siblings          []NodeConnection
+	mutex             sync.RWMutex
+	parent            NodeConnection
+	config            *tfconfig.TFConfig
+	registry          map[string]string
+	connectionCount   int
+	selectionContext  StrategyContext
+	selectionStrategy NodeSelectionStrategy
+}
+
+func (b *BaseNode) updateSelectionContext() {
+	wg := sync.WaitGroup{}
+
+	functions := make(map[string][]string)
+	functionMutex := sync.Mutex{}
+
+	requests := make(map[string]int)
+	requestMutex := sync.Mutex{}
+
+	for _, s := range b.siblings {
+		wg.Add(2)
+
+		sibling := s
+
+		go func() {
+			defer wg.Done()
+			list, err := sibling.Client.GetFunctionList(context.Background(), &pb.Empty{})
+			if err != nil {
+				log.Errorf("failed to get function list from sibling %s: %v", sibling.Address, err)
+				return
+			}
+
+			functionMutex.Lock()
+			functions[sibling.Address.Name] = list.FunctionNames
+			functionMutex.Unlock()
+
+			log.Debugf("got function list from sibling %s: %+v", sibling.Address.Name, list.FunctionNames)
+		}()
+
+		go func() {
+			defer wg.Done()
+			count, err := sibling.Client.GetActiveRequests(context.Background(), &pb.Empty{})
+			if err != nil {
+				log.Errorf("failed to get active requests from sibling %s: %v", sibling.Address, err)
+				return
+			}
+
+			requestMutex.Lock()
+			requests[sibling.Address.Name] = int(count.Count)
+
+			if sibling.Address.Name == b.self.Address.Name {
+				// substract the current request
+				requests[sibling.Address.Name]--
+			}
+			requestMutex.Unlock()
+
+			log.Debugf("got active requests from sibling %s: %d", sibling.Address.Name, count.Count)
+		}()
+	}
+
+	wg.Wait()
+
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	b.selectionContext.Siblings = b.siblings
+	b.selectionContext.CurrentNode = &b.self
+	b.selectionContext.ParentNode = &b.parent
+	b.selectionContext.ActiveRequests = requests
+	b.selectionContext.DeployedFuncs = functions
 }
 
 func (b *BaseNode) increaseConnectionCount() {
@@ -159,6 +222,15 @@ func (b *BaseNode) serve() {
 
 func (b *BaseNode) Info(ctx context.Context, in *pb.Empty) (*pb.NodeAddress, error) {
 	return b.self.Address, nil
+}
+
+func (b *BaseNode) GetActiveRequests(ctx context.Context, in *pb.Empty) (*pb.RequestCount, error) {
+	b.mutex.RLock()
+	defer b.mutex.RUnlock()
+
+	return &pb.RequestCount{
+		Count: int32(b.connectionCount),
+	}, nil
 }
 
 func (b *BaseNode) GetFunctionList(ctx context.Context, in *pb.Empty) (*pb.FunctionList, error) {
@@ -280,56 +352,15 @@ func (b *BaseNode) Register(ctx context.Context, in *pb.NodeAddress) (*pb.Empty,
 // ! CODE FOR MANAGING FUNCTION CALLS
 // ! ********************************
 
-func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.FunctionCallResponse, error) {
-	log.Debugf("have function call: %+v", in)
+func (b *BaseNode) CallFunctionLocal(ctx context.Context, in *pb.FunctionCall) (*pb.FunctionCallResponse, error) {
+	log.Debugf("have local function call: %+v", in)
 
 	go b.increaseConnectionCount()
 	defer b.decreaseConnectionCount()
 
-	if b.config.Mode == "cloud" {
-		log.Warnf("got function call in cloud mode")
-	}
-
-	node := b.self
-
-	if b.config.Mode == "edge" {
-		nodes := b.fetchSiblingFunctions()
-		log.Debugf("have sibling functions: %+v", nodes)
-
-		functionNodes := nodes[in.FunctionIdentifier]
-
-		if len(functionNodes) == 0 {
-			log.Warnf("no sibling functions found for %s", in.FunctionIdentifier)
-			log.Infof("escalating call to parent")
-
-			resp, err := b.parent.Client.CallFunction(context.Background(), in)
-			if err != nil {
-				log.Errorf("failed to escalate call: %v", err)
-				return nil, fmt.Errorf("failed to escalate call: %v", err)
-			}
-
-			return resp, nil
-		}
-
-		// TODO: implement adapter mechanism for load balancing strategies
-
-		node = functionNodes[rand.Intn(len(functionNodes))]
-	}
-
-	go func() {
-		if b.config.Mode == "fog" {
-			log.Infof("deploying function %s to children", in.FunctionIdentifier)
-			b.deployToChild(in.FunctionIdentifier)
-		}
-	}()
-
-	log.Infof("calling function %s on node %s", in.FunctionIdentifier, node.Address.Name)
-
-	resp, err := b.callProxy(node.Address.ProxyAddress, in.FunctionIdentifier, []byte(in.Data))
-
+	resp, err := b.callProxy(in.FunctionIdentifier, []byte(in.Data))
 	if err != nil {
 		log.Errorf("failed to call function: %v", err)
-		// TODO: failure handling
 		return nil, fmt.Errorf("failed to call function: %v", err)
 	}
 
@@ -338,32 +369,90 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 	}, nil
 }
 
-func (b *BaseNode) fetchSiblingFunctions() map[string][]NodeConnection {
-	functions := make(map[string][]NodeConnection)
+func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.FunctionCallResponse, error) {
+	log.Debugf("have function call: %+v", in)
 
-	// TODO: this needs to be in parallel and use a tight timeout
-
-	for _, sibling := range b.siblings {
-		list, err := sibling.Client.GetFunctionList(context.Background(), &pb.Empty{})
-		if err != nil {
-			log.Errorf("failed to get function list from sibling %s: %v", sibling.Address, err)
-			return nil
-		}
-
-		for _, name := range list.FunctionNames {
-			functions[name] = append(functions[name], sibling)
-		}
+	if b.config.Mode == "cloud" {
+		log.Warnf("got function call in cloud mode")
 	}
 
-	return functions
+	// TODO: cache this
+	b.updateSelectionContext()
+
+	if b.config.Mode == "edge" {
+		result, err := b.selectionStrategy.SelectNode(&b.selectionContext, in.FunctionIdentifier)
+		if err != nil {
+			log.Errorf("failed to select node: %v", err)
+			return nil, fmt.Errorf("failed to select node: %v", err)
+		}
+
+		if result.NeedsDeployment {
+			log.Infof("requesting deployment of function %s on node %s", in.FunctionIdentifier, result.SelectedNode.Address.Name)
+
+			deploy := func() error {
+				_, err := b.parent.Client.RequestDeployment(context.Background(), &pb.DeploymentRequest{
+					FunctionName: in.FunctionIdentifier,
+					TargetNode:   result.DeploymentTarget.Address,
+				})
+
+				if err != nil {
+					log.Errorf("failed to request deployment: %v", err)
+					return fmt.Errorf("failed to request deployment: %v", err)
+				}
+
+				return nil
+			}
+
+			if err != nil {
+				log.Errorf("failed to request deployment: %v", err)
+				return nil, fmt.Errorf("failed to request deployment: %v", err)
+			}
+
+			if result.SyncDeployment {
+				err = deploy()
+				if err != nil {
+					log.Errorf("failed to request deployment: %v", err)
+					return nil, fmt.Errorf("failed to request deployment: %v", err)
+				}
+			} else {
+				go deploy()
+			}
+		}
+
+		log.Infof("calling function %s on node %s", in.FunctionIdentifier, result.SelectedNode.Address.Name)
+
+		resp, err := result.SelectedNode.Client.CallFunctionLocal(context.Background(), in)
+
+		if err != nil {
+			log.Errorf("failed to call function: %v", err)
+
+			// TODO: retry
+		}
+
+		return &pb.FunctionCallResponse{
+			Response: resp.Response,
+		}, nil
+	}
+
+	log.Infof("calling function %s locally", in.FunctionIdentifier)
+	resp, err := b.callProxy(in.FunctionIdentifier, []byte(in.Data))
+
+	if err != nil {
+		log.Errorf("failed to call function: %v", err)
+		return nil, fmt.Errorf("failed to call function: %v", err)
+	}
+
+	return &pb.FunctionCallResponse{
+		Response: string(resp),
+	}, nil
 }
 
-func (b *BaseNode) callProxy(node string, name string, payload []byte) ([]byte, error) {
+func (b *BaseNode) callProxy(name string, payload []byte) ([]byte, error) {
 	client := http.Client{
 		Timeout: 5 * time.Second,
 	}
 
-	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s/%s", node, name), strings.NewReader(string(payload)))
+	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s/%s", b.self.Address.ProxyAddress, name), strings.NewReader(string(payload)))
 	if err != nil {
 		log.Errorf("failed to create request: %v", err)
 		return nil, fmt.Errorf("failed to create request: %v", err)
@@ -388,34 +477,6 @@ func (b *BaseNode) callProxy(node string, name string, payload []byte) ([]byte, 
 // ! *************************************
 // ! CODE FOR MANAGING FUNCTION DEPLOYMENT
 // ! *************************************
-
-func (b *BaseNode) deployToChild(name string) {
-	// TODO: implement adapter mechanism for deployment strategies
-
-	if len(b.children) == 0 {
-		log.Error("no children to deploy to")
-		return
-	}
-
-	child := b.children[rand.Intn(len(b.children))]
-
-	log.Infof("deploying function %s to child %s", name, child.Address.Name)
-
-	if b.registry[name] == "" {
-		log.Warnf("function %s not found in registry", name)
-		return
-	}
-
-	_, err := child.Client.DeployFunction(context.Background(), &pb.Function{
-		Name: name,
-		Json: b.registry[name],
-	})
-	if err != nil {
-		log.Warnf("failed to notify child of new function %s: %v", child.Address.Name, err)
-		// TODO: maybe deploy to other child?
-	}
-}
-
 func (b *BaseNode) deployFunction(function *Function) error {
 	log.Infof("deploying function %s", function.Name)
 
@@ -559,4 +620,37 @@ func (b *BaseNode) DeployFunction(ctx context.Context, in *pb.Function) (*pb.Emp
 	// TODO: edge nodes should maybe remove deployted functions when not used for a while
 
 	return &pb.Empty{}, nil
+}
+
+func (b *BaseNode) RequestDeployment(ctx context.Context, in *pb.DeploymentRequest) (*pb.Empty, error) {
+	log.Infof("got deployment request for function %s", in.FunctionName)
+
+	if b.config.Mode == "cloud" {
+		log.Warnf("got function deployment request in cloud mode")
+		return nil, fmt.Errorf("got function deployment request in cloud mode")
+	}
+
+	target := in.TargetNode
+
+	// check if target is a child
+	for _, child := range b.children {
+		if child.Address.Name == target.Name {
+			log.Infof("deploying function to child %s", target.Name)
+
+			_, err := child.Client.DeployFunction(context.Background(), &pb.Function{
+				Name: in.FunctionName,
+				Json: b.registry[in.FunctionName],
+			})
+
+			if err != nil {
+				log.Errorf("failed to deploy function: %v", err)
+				return nil, fmt.Errorf("failed to deploy function: %v", err)
+			}
+
+			return &pb.Empty{}, nil
+		}
+	}
+
+	log.Warnf("got deployment request for non-existent child %s", target.Name)
+	return nil, fmt.Errorf("got deployment request for non-existent child %s", target.Name)
 }

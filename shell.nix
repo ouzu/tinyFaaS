@@ -1,4 +1,4 @@
-{ pkgs ? import <nixpkgs> { } }:
+{ pkgs, tfcli, ... }:
 with pkgs;
 mkShell {
   name = "tinyFaaS-shell";
@@ -14,6 +14,8 @@ mkShell {
     grpc-tools
     protoc-gen-go
     protoc-gen-go-grpc
+
+    tfcli.tinyFaaS-cli
   ];
 
   shellHook = ''

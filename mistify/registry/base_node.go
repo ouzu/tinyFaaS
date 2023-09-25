@@ -425,7 +425,7 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 
 		if err != nil {
 			log.Errorf("failed to call function: %v", err)
-
+			return nil, fmt.Errorf("failed to call function: %v", err)
 			// TODO: retry
 		}
 

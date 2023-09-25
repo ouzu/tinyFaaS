@@ -7,5 +7,6 @@ buildGoModule {
   postBuild = ''
     mkdir -p $out/share/tinyFaaS
     cp -r $src/runtimes $out/share/tinyFaaS
+    cp -r $src/test/fns $out/share/tinyFaaS
   '';
 }

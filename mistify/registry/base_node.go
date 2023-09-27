@@ -59,18 +59,20 @@ func NCtoNames(nc []NodeConnection) []string {
 
 type BaseNode struct {
 	pb.UnimplementedMistifyServer
-	self                 NodeConnection
-	children             []NodeConnection
-	siblings             []NodeConnection
-	mutex                sync.RWMutex
-	parent               NodeConnection
-	config               *tfconfig.TFConfig
-	registry             map[string]string
-	connectionCount      int
-	connectionCountMutex sync.RWMutex
-	selectionContext     StrategyContext
-	selectionContextAge  time.Time
-	selectionStrategy    NodeSelectionStrategy
+	self                    NodeConnection
+	children                []NodeConnection
+	siblings                []NodeConnection
+	mutex                   sync.RWMutex
+	parent                  NodeConnection
+	config                  *tfconfig.TFConfig
+	registry                map[string]string
+	connectionCount         int
+	connectionCountMutex    sync.RWMutex
+	selectionContext        StrategyContext
+	selectionContextAge     time.Time
+	selectionStrategy       NodeSelectionStrategy
+	functionDeployments     map[string][]string
+	functionDeploymentMutex sync.RWMutex
 }
 
 func (b *BaseNode) updateSelectionContext() {
@@ -431,10 +433,21 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 				}
 
 				if result.SyncDeployment {
-					err = deploy()
-					if err != nil {
-						log.Errorf("failed to request deployment: %v", err)
-						return nil, fmt.Errorf("failed to request deployment: %v", err)
+					backoff = 1 * time.Second
+
+					for {
+						err = deploy()
+						if err != nil {
+							log.Warnf("failed to request deployment: %v", err)
+							if backoff > 10*time.Second {
+								log.Errorf("max backoff exceeded, giving up: %v", err)
+								return nil, fmt.Errorf("failed to request deployment: %v", err)
+							}
+							time.Sleep(backoff)
+							backoff *= 2
+						} else {
+							break
+						}
 					}
 				} else {
 					go deploy()
@@ -446,15 +459,15 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 			resp, err := result.SelectedNode.Client.CallFunctionLocal(context.Background(), in)
 
 			if err != nil {
-				log.Errorf("failed to call function: %v", err)
-
-				time.Sleep(backoff)
-				backoff *= 2
+				log.Warnf("failed to call function: %v", err)
 
 				if backoff > 10*time.Second {
+					log.Errorf("max backoff exceeded, giving up: %v", err)
 					return nil, fmt.Errorf("failed to call function: %v", err)
 				}
 
+				time.Sleep(backoff)
+				backoff *= 2
 				continue
 			}
 
@@ -497,10 +510,17 @@ func (b *BaseNode) callProxy(name string, payload []byte) ([]byte, error) {
 		return nil, fmt.Errorf("failed to call function: %v", err)
 	}
 
+	defer resp.Body.Close()
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Errorf("failed to read response body: %v", err)
 		return nil, fmt.Errorf("failed to read response body: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Warnf("function call failed with status code %d", resp.StatusCode)
+		return body, fmt.Errorf("function call failed with status code %d", resp.StatusCode)
 	}
 
 	return body, nil
@@ -656,12 +676,59 @@ func (b *BaseNode) DeployFunction(ctx context.Context, in *pb.Function) (*pb.Emp
 	return &pb.Empty{}, nil
 }
 
+func (b *BaseNode) getFunctionDeploymentStatus(name string, child string) bool {
+	b.functionDeploymentMutex.RLock()
+	defer b.functionDeploymentMutex.RUnlock()
+
+	if b.functionDeployments == nil {
+		return false
+	}
+
+	if _, ok := b.functionDeployments[name]; !ok {
+		return false
+	}
+
+	for _, node := range b.functionDeployments[name] {
+		if node == child {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (b *BaseNode) setFunctionDeploymentStatus(name string, child string, status bool) {
+	b.functionDeploymentMutex.Lock()
+	defer b.functionDeploymentMutex.Unlock()
+
+	if b.functionDeployments == nil {
+		b.functionDeployments = make(map[string][]string)
+	}
+
+	if _, ok := b.functionDeployments[name]; !ok {
+		b.functionDeployments[name] = make([]string, 0)
+	}
+
+	if status {
+		log.Debugf("setting function deployment status for %s to true", name)
+		b.functionDeployments[name] = append(b.functionDeployments[name], child)
+	} else {
+		log.Debugf("setting function deployment status for %s to false", name)
+		for i, node := range b.functionDeployments[name] {
+			if node == child {
+				b.functionDeployments[name] = append(b.functionDeployments[name][:i], b.functionDeployments[name][i+1:]...)
+				break
+			}
+		}
+	}
+}
+
 func (b *BaseNode) RequestDeployment(ctx context.Context, in *pb.DeploymentRequest) (*pb.Empty, error) {
 	log.Infof("got deployment request for function %s", in.FunctionName)
 
-	if b.config.Mode == "cloud" {
-		log.Warnf("got function deployment request in cloud mode")
-		return nil, fmt.Errorf("got function deployment request in cloud mode")
+	if b.config.Mode == "cloud" || b.config.Mode == "edge" {
+		log.Warnf("got function deployment request in %s mode", b.config.Mode)
+		return nil, fmt.Errorf("got function deployment request in %s mode", b.config.Mode)
 	}
 
 	target := in.TargetNode
@@ -669,6 +736,16 @@ func (b *BaseNode) RequestDeployment(ctx context.Context, in *pb.DeploymentReque
 	// check if target is a child
 	for _, child := range b.children {
 		if child.Address.Name == target.Name {
+			// check if function is already being deployed
+			if b.getFunctionDeploymentStatus(in.FunctionName, target.Name) {
+				log.Warnf("function %s is already being deployed on node %s", in.FunctionName, target.Name)
+				return &pb.Empty{}, nil
+			}
+
+			// set function deployment status
+			b.setFunctionDeploymentStatus(in.FunctionName, target.Name, true)
+			defer b.setFunctionDeploymentStatus(in.FunctionName, target.Name, false)
+
 			log.Infof("deploying function to child %s", target.Name)
 
 			_, err := child.Client.DeployFunction(context.Background(), &pb.Function{

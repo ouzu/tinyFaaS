@@ -41,6 +41,12 @@ func (l *LeastBusyStrategy) selectDeploymentNode(ctx *StrategyContext, name stri
 		}
 	}
 
+	// check if any nodes do not have the function deployed
+	if len(coldNodes) == 0 {
+		log.Errorf("no nodes available for deployment of function %s", name)
+		return nil
+	}
+
 	// get the minimum number of deployed functions
 	min := len(ctx.DeployedFuncs[coldNodes[0].Address.Name])
 	for _, node := range coldNodes {

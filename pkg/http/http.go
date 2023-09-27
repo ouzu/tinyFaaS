@@ -32,7 +32,9 @@ func Start(r *rproxy.RProxy, listenAddr string) {
 			return
 		}
 
-		s, res := r.Call(p, req_body, async, bypass)
+		s, res, header := r.Call(p, req_body, async, bypass)
+
+		w.Header().Add("X-Mistify-Data", header)
 
 		switch s {
 		case rproxy.StatusOK:

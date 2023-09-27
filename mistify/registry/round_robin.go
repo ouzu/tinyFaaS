@@ -9,6 +9,9 @@ type RoundRobinStrategy struct {
 }
 
 func (l *RoundRobinStrategy) SelectNode(ctx *StrategyContext, name string) (*NodeSelectionResult, error) {
+	ctx.Mutex.RLock()
+	defer ctx.Mutex.RUnlock()
+
 	// Select the next node
 	l.n = (l.n + 1) % len(ctx.Siblings)
 

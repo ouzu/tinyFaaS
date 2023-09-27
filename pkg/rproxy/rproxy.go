@@ -80,7 +80,7 @@ func (r *RProxy) Del(name string) error {
 	return nil
 }
 
-func (r *RProxy) Call(name string, payload []byte, async bool, bypass bool) (Status, []byte) {
+func (r *RProxy) Call(name string, payload []byte, async bool, bypass bool) (Status, []byte, string) {
 	if bypass {
 		return r.CallLocal(name, payload, async)
 	}
@@ -91,19 +91,19 @@ func (r *RProxy) Call(name string, payload []byte, async bool, bypass bool) (Sta
 	})
 	if err != nil {
 		log.Printf("error calling function: %v", err)
-		return StatusError, nil
+		return StatusError, nil, ""
 	}
 
-	return StatusOK, []byte(res.Response)
+	return StatusOK, []byte(res.Response), res.Node.Name
 }
 
-func (r *RProxy) CallLocal(name string, payload []byte, async bool) (Status, []byte) {
+func (r *RProxy) CallLocal(name string, payload []byte, async bool) (Status, []byte, string) {
 
 	handler, ok := r.hosts[name]
 
 	if !ok {
 		log.Printf("function not found: %s", name)
-		return StatusNotFound, nil
+		return StatusNotFound, nil, ""
 	}
 
 	log.Printf("have handlers: %s", handler)
@@ -127,7 +127,7 @@ func (r *RProxy) CallLocal(name string, payload []byte, async bool) (Status, []b
 
 			log.Printf("async request finished")
 		}()
-		return StatusAccepted, nil
+		return StatusAccepted, nil, ""
 	}
 
 	// call function and return results
@@ -136,7 +136,7 @@ func (r *RProxy) CallLocal(name string, payload []byte, async bool) (Status, []b
 
 	if err != nil {
 		log.Print(err)
-		return StatusError, nil
+		return StatusError, nil, ""
 	}
 
 	log.Printf("sync request finished")
@@ -146,10 +146,10 @@ func (r *RProxy) CallLocal(name string, payload []byte, async bool) (Status, []b
 
 	if err != nil {
 		log.Print(err)
-		return StatusError, nil
+		return StatusError, nil, ""
 	}
 
 	// log.Printf("have response for sync request: %s", res_body)
 
-	return StatusOK, res_body
+	return StatusOK, res_body, ""
 }

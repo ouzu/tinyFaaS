@@ -6,6 +6,16 @@ import (
 
 	pb "github.com/OpenFogStack/tinyFaaS/mistify/registry/node"
 	"github.com/OpenFogStack/tinyFaaS/pkg/tfconfig"
+	"github.com/charmbracelet/log"
+)
+
+const (
+	C_LEAST_BUSY      = "leastbusy"
+	C_LOCAL           = "local"
+	C_RANDOM          = "random"
+	C_RANDOM_HOT      = "randomhot"
+	C_ROUND_ROBIN     = "roundrobin"
+	C_ROUND_ROBIN_HOT = "roundrobinhot"
 )
 
 type EdgeNode struct {
@@ -13,6 +23,32 @@ type EdgeNode struct {
 }
 
 func NewEdgeNode(config *tfconfig.TFConfig) *EdgeNode {
+	var strategy NodeSelectionStrategy
+
+	switch config.MistifyStrategy {
+	case C_LEAST_BUSY:
+		log.Info("Using least busy strategy")
+		strategy = &LeastBusyStrategy{}
+	case C_LOCAL:
+		log.Info("Using local strategy")
+		strategy = &LocalOnlyStrategy{}
+	case C_RANDOM:
+		log.Info("Using random strategy")
+		strategy = &RandomStrategy{}
+	case C_RANDOM_HOT:
+		log.Info("Using random hot strategy")
+		strategy = &RandomHotStrategy{}
+	case C_ROUND_ROBIN:
+		log.Info("Using round robin strategy")
+		strategy = &RoundRobinStrategy{}
+	case C_ROUND_ROBIN_HOT:
+		log.Info("Using round robin hot strategy")
+		strategy = &RoundRobinHotStrategy{}
+	default:
+		log.Info("Invalid strategy, falling back to least busy")
+		strategy = &LeastBusyStrategy{}
+	}
+
 	return &EdgeNode{
 		BaseNode: BaseNode{
 			self: NodeConnection{
@@ -25,7 +61,7 @@ func NewEdgeNode(config *tfconfig.TFConfig) *EdgeNode {
 				nil,
 			},
 			config:            config,
-			selectionStrategy: &LeastBusyStrategy{},
+			selectionStrategy: strategy,
 		},
 	}
 }

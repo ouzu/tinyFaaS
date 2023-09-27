@@ -11,6 +11,9 @@ type RoundRobinHotStrategy struct {
 }
 
 func (l *RoundRobinHotStrategy) SelectNode(ctx *StrategyContext, name string) (*NodeSelectionResult, error) {
+	ctx.Mutex.RLock()
+	defer ctx.Mutex.RUnlock()
+
 	// build a list of nodes that have the function deployed
 	var hotNodes []NodeConnection
 	for _, node := range ctx.Siblings {
@@ -25,6 +28,7 @@ func (l *RoundRobinHotStrategy) SelectNode(ctx *StrategyContext, name string) (*
 	}
 
 	// check if any nodes have the function deployed
+	// TODO: check for threshold like in the least busy strategy
 	if len(hotNodes) == 0 {
 		log.Infof("no sibling nodes have function %s deployed, escalating to parent", name)
 

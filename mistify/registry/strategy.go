@@ -1,5 +1,7 @@
 package registry
 
+import "sync"
+
 type StrategyContext struct {
 	Siblings    []NodeConnection
 	CurrentNode *NodeConnection
@@ -10,6 +12,8 @@ type StrategyContext struct {
 
 	// list of deployed functions for each sibling
 	DeployedFuncs map[string][]string
+
+	Mutex sync.RWMutex
 }
 
 type NodeSelectionResult struct {

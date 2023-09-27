@@ -20,6 +20,10 @@ const (
 func (l *LeastBusyStrategy) selectDeploymentNode(ctx *StrategyContext, name string) *NodeConnection {
 	// build a list of nodes which do not have the function deployed
 	var coldNodes []NodeConnection
+
+	ctx.Mutex.RLock()
+	defer ctx.Mutex.RUnlock()
+
 	for _, node := range ctx.Siblings {
 		if funcs, ok := ctx.DeployedFuncs[node.Address.Name]; ok {
 			found := false
@@ -57,6 +61,9 @@ func (l *LeastBusyStrategy) selectDeploymentNode(ctx *StrategyContext, name stri
 }
 
 func (l *LeastBusyStrategy) SelectNode(ctx *StrategyContext, name string) (*NodeSelectionResult, error) {
+	ctx.Mutex.RLock()
+	defer ctx.Mutex.RUnlock()
+
 	// build a list of nodes that have the function deployed
 	var hotNodes []NodeConnection
 	for _, node := range ctx.Siblings {

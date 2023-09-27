@@ -9,6 +9,9 @@ import (
 type RandomStrategy struct{}
 
 func (l *RandomStrategy) SelectNode(ctx *StrategyContext, name string) (*NodeSelectionResult, error) {
+	ctx.Mutex.RLock()
+	defer ctx.Mutex.RUnlock()
+
 	// Select a random node
 	target := ctx.Siblings[rand.Intn(len(ctx.Siblings))]
 

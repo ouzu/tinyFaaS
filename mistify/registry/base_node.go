@@ -59,16 +59,18 @@ func NCtoNames(nc []NodeConnection) []string {
 
 type BaseNode struct {
 	pb.UnimplementedMistifyServer
-	self              NodeConnection
-	children          []NodeConnection
-	siblings          []NodeConnection
-	mutex             sync.RWMutex
-	parent            NodeConnection
-	config            *tfconfig.TFConfig
-	registry          map[string]string
-	connectionCount   int
-	selectionContext  StrategyContext
-	selectionStrategy NodeSelectionStrategy
+	self                 NodeConnection
+	children             []NodeConnection
+	siblings             []NodeConnection
+	mutex                sync.RWMutex
+	parent               NodeConnection
+	config               *tfconfig.TFConfig
+	registry             map[string]string
+	connectionCount      int
+	connectionCountMutex sync.RWMutex
+	selectionContext     StrategyContext
+	selectionContextAge  time.Time
+	selectionStrategy    NodeSelectionStrategy
 }
 
 func (b *BaseNode) updateSelectionContext() {
@@ -121,21 +123,29 @@ func (b *BaseNode) updateSelectionContext() {
 		}()
 	}
 
+	log.Debug("waiting for function list and active requests")
+
 	wg.Wait()
 
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
+	log.Debug("updating selection context")
+
+	b.selectionContext.Mutex.Lock()
+	defer b.selectionContext.Mutex.Unlock()
+
+	b.selectionContextAge = time.Now()
 
 	b.selectionContext.Siblings = b.siblings
 	b.selectionContext.CurrentNode = &b.self
 	b.selectionContext.ParentNode = &b.parent
 	b.selectionContext.ActiveRequests = requests
 	b.selectionContext.DeployedFuncs = functions
+
+	log.Debug("updated selection context")
 }
 
 func (b *BaseNode) increaseConnectionCount() {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
+	b.connectionCountMutex.Lock()
+	defer b.connectionCountMutex.Unlock()
 
 	b.connectionCount++
 
@@ -143,8 +153,8 @@ func (b *BaseNode) increaseConnectionCount() {
 }
 
 func (b *BaseNode) decreaseConnectionCount() {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
+	b.connectionCountMutex.Lock()
+	defer b.connectionCountMutex.Unlock()
 
 	b.connectionCount--
 
@@ -225,8 +235,8 @@ func (b *BaseNode) Info(ctx context.Context, in *pb.Empty) (*pb.NodeAddress, err
 }
 
 func (b *BaseNode) GetActiveRequests(ctx context.Context, in *pb.Empty) (*pb.RequestCount, error) {
-	b.mutex.RLock()
-	defer b.mutex.RUnlock()
+	b.connectionCountMutex.RLock()
+	defer b.connectionCountMutex.RUnlock()
 
 	return &pb.RequestCount{
 		Count: int32(b.connectionCount),
@@ -366,6 +376,7 @@ func (b *BaseNode) CallFunctionLocal(ctx context.Context, in *pb.FunctionCall) (
 
 	return &pb.FunctionCallResponse{
 		Response: string(resp),
+		Node:     b.self.Address,
 	}, nil
 }
 
@@ -376,62 +387,82 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 		log.Warnf("got function call in cloud mode")
 	}
 
-	// TODO: cache this
-	b.updateSelectionContext()
+	if b.selectionContextAge == (time.Time{}) {
+		log.Debug("updating empty selection context")
+		b.updateSelectionContext()
+	}
+
+	if time.Since(b.selectionContextAge) > 5*time.Second {
+		log.Debug("updating old selection context in background")
+		go b.updateSelectionContext()
+	}
 
 	if b.config.Mode == "edge" {
-		result, err := b.selectionStrategy.SelectNode(&b.selectionContext, in.FunctionIdentifier)
-		if err != nil {
-			log.Errorf("failed to select node: %v", err)
-			return nil, fmt.Errorf("failed to select node: %v", err)
-		}
 
-		if result.NeedsDeployment {
-			log.Infof("requesting deployment of function %s on node %s", in.FunctionIdentifier, result.SelectedNode.Address.Name)
+		backoff := 1 * time.Second
 
-			deploy := func() error {
-				_, err := b.parent.Client.RequestDeployment(context.Background(), &pb.DeploymentRequest{
-					FunctionName: in.FunctionIdentifier,
-					TargetNode:   result.DeploymentTarget.Address,
-				})
+		for {
+			result, err := b.selectionStrategy.SelectNode(&b.selectionContext, in.FunctionIdentifier)
+			if err != nil {
+				log.Errorf("failed to select node: %v", err)
+				return nil, fmt.Errorf("failed to select node: %v", err)
+			}
 
-				if err != nil {
-					log.Errorf("failed to request deployment: %v", err)
-					return fmt.Errorf("failed to request deployment: %v", err)
+			if result.NeedsDeployment {
+				log.Infof("requesting deployment of function %s on node %s", in.FunctionIdentifier, result.SelectedNode.Address.Name)
+
+				deploy := func() error {
+					_, err := b.parent.Client.RequestDeployment(context.Background(), &pb.DeploymentRequest{
+						FunctionName: in.FunctionIdentifier,
+						TargetNode:   result.DeploymentTarget.Address,
+					})
+
+					if err != nil {
+						log.Errorf("failed to request deployment: %v", err)
+						return fmt.Errorf("failed to request deployment: %v", err)
+					}
+
+					return nil
 				}
 
-				return nil
-			}
-
-			if err != nil {
-				log.Errorf("failed to request deployment: %v", err)
-				return nil, fmt.Errorf("failed to request deployment: %v", err)
-			}
-
-			if result.SyncDeployment {
-				err = deploy()
 				if err != nil {
 					log.Errorf("failed to request deployment: %v", err)
 					return nil, fmt.Errorf("failed to request deployment: %v", err)
 				}
-			} else {
-				go deploy()
+
+				if result.SyncDeployment {
+					err = deploy()
+					if err != nil {
+						log.Errorf("failed to request deployment: %v", err)
+						return nil, fmt.Errorf("failed to request deployment: %v", err)
+					}
+				} else {
+					go deploy()
+				}
 			}
+
+			log.Infof("calling function %s on node %s", in.FunctionIdentifier, result.SelectedNode.Address.Name)
+
+			resp, err := result.SelectedNode.Client.CallFunctionLocal(context.Background(), in)
+
+			if err != nil {
+				log.Errorf("failed to call function: %v", err)
+
+				time.Sleep(backoff)
+				backoff *= 2
+
+				if backoff > 10*time.Second {
+					return nil, fmt.Errorf("failed to call function: %v", err)
+				}
+
+				continue
+			}
+
+			return &pb.FunctionCallResponse{
+				Response: resp.Response,
+				Node:     resp.Node,
+			}, nil
 		}
-
-		log.Infof("calling function %s on node %s", in.FunctionIdentifier, result.SelectedNode.Address.Name)
-
-		resp, err := result.SelectedNode.Client.CallFunctionLocal(context.Background(), in)
-
-		if err != nil {
-			log.Errorf("failed to call function: %v", err)
-			return nil, fmt.Errorf("failed to call function: %v", err)
-			// TODO: retry
-		}
-
-		return &pb.FunctionCallResponse{
-			Response: resp.Response,
-		}, nil
 	}
 
 	log.Infof("calling function %s locally", in.FunctionIdentifier)
@@ -444,6 +475,7 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 
 	return &pb.FunctionCallResponse{
 		Response: string(resp),
+		Node:     b.self.Address,
 	}, nil
 }
 
@@ -504,6 +536,8 @@ func (b *BaseNode) deployFunction(function *Function) error {
 		log.Errorf("upload failed with status code %d", res.StatusCode)
 		return fmt.Errorf("upload failed with status code %d", res.StatusCode)
 	}
+
+	go b.updateSelectionContext()
 
 	return nil
 }

@@ -5,6 +5,9 @@ import "github.com/charmbracelet/log"
 type LocalOnlyStrategy struct{}
 
 func (l *LocalOnlyStrategy) SelectNode(ctx *StrategyContext, name string) (*NodeSelectionResult, error) {
+	ctx.Mutex.RLock()
+	defer ctx.Mutex.RUnlock()
+
 	log.Debugf("selecting node for function %s", name)
 
 	// Always select the current node

@@ -54,4 +54,7 @@ message FunctionCall {
     bool async = 3;
 }
   
-message FunctionCallResponse { string response = 1; }
+message FunctionCallResponse {
+    string response = 1;
+    NodeAddress node = 2;
+}

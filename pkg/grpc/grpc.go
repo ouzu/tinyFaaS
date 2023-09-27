@@ -21,7 +21,7 @@ func (gs *GRPCServer) Request(ctx context.Context, d *tinyfaas.Data) (*tinyfaas.
 
 	log.Printf("have request for path: %s (async: %v, bypass: %v)", d.FunctionIdentifier, false, false)
 
-	s, res := gs.r.Call(d.FunctionIdentifier, []byte(d.Data), false, false)
+	s, res, _ := gs.r.Call(d.FunctionIdentifier, []byte(d.Data), false, false)
 
 	switch s {
 	case rproxy.StatusOK:

@@ -19,6 +19,8 @@ type TFConfig struct {
 	Host          string
 	ParentAddress string
 	RegistryPort  int
+
+	MistifyStrategy string
 }
 
 func DefaultConfig() TFConfig {
@@ -39,5 +41,7 @@ func DefaultConfig() TFConfig {
 		Host:          "",
 		ParentAddress: "",
 		RegistryPort:  8082,
+
+		MistifyStrategy: "leastbusy",
 	}
 }

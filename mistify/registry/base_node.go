@@ -439,7 +439,7 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 						err = deploy()
 						if err != nil {
 							log.Warnf("failed to request deployment: %v", err)
-							if backoff > 10*time.Second {
+							if backoff > 40*time.Second {
 								log.Errorf("max backoff exceeded, giving up: %v", err)
 								return nil, fmt.Errorf("failed to request deployment: %v", err)
 							}
@@ -478,18 +478,30 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 		}
 	}
 
-	log.Infof("calling function %s locally", in.FunctionIdentifier)
-	resp, err := b.callProxy(in.FunctionIdentifier, []byte(in.Data))
+	backoff := 1 * time.Second
 
-	if err != nil {
-		log.Errorf("failed to call function: %v", err)
-		return nil, fmt.Errorf("failed to call function: %v", err)
+	for {
+		log.Infof("calling function %s locally", in.FunctionIdentifier)
+		resp, err := b.callProxy(in.FunctionIdentifier, []byte(in.Data))
+
+		if err != nil {
+			log.Errorf("failed to call function: %v", err)
+
+			if backoff > 10*time.Second {
+				log.Errorf("max backoff exceeded, giving up: %v", err)
+				return nil, fmt.Errorf("failed to call function: %v", err)
+			}
+
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
+		}
+
+		return &pb.FunctionCallResponse{
+			Response: string(resp),
+			Node:     b.self.Address,
+		}, nil
 	}
-
-	return &pb.FunctionCallResponse{
-		Response: string(resp),
-		Node:     b.self.Address,
-	}, nil
 }
 
 func (b *BaseNode) callProxy(name string, payload []byte) ([]byte, error) {

@@ -394,7 +394,7 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 		b.updateSelectionContext()
 	}
 
-	if time.Since(b.selectionContextAge) > 5*time.Second {
+	if time.Since(b.selectionContextAge) > 1*time.Second {
 		log.Debug("updating old selection context in background")
 		go b.updateSelectionContext()
 	}

@@ -62,6 +62,9 @@ func NewEdgeNode(config *tfconfig.TFConfig) *EdgeNode {
 			},
 			config:            config,
 			selectionStrategy: strategy,
+			selectionContext: StrategyContext{
+				ActiveRequests: make(map[string]int),
+			},
 		},
 	}
 }

@@ -81,48 +81,22 @@ func (b *BaseNode) updateSelectionContext() {
 	functions := make(map[string][]string)
 	functionMutex := sync.Mutex{}
 
-	requests := make(map[string]int)
-	requestMutex := sync.Mutex{}
-
 	for _, s := range b.siblings {
 		wg.Add(2)
 
 		sibling := s
 
-		go func() {
-			defer wg.Done()
-			list, err := sibling.Client.GetFunctionList(context.Background(), &pb.Empty{})
-			if err != nil {
-				log.Errorf("failed to get function list from sibling %s: %v", sibling.Address, err)
-				return
-			}
+		list, err := sibling.Client.GetFunctionList(context.Background(), &pb.Empty{})
+		if err != nil {
+			log.Errorf("failed to get function list from sibling %s: %v", sibling.Address, err)
+			return
+		}
 
-			functionMutex.Lock()
-			functions[sibling.Address.Name] = list.FunctionNames
-			functionMutex.Unlock()
+		functionMutex.Lock()
+		functions[sibling.Address.Name] = list.FunctionNames
+		functionMutex.Unlock()
 
-			log.Debugf("got function list from sibling %s: %+v", sibling.Address.Name, list.FunctionNames)
-		}()
-
-		go func() {
-			defer wg.Done()
-			count, err := sibling.Client.GetActiveRequests(context.Background(), &pb.Empty{})
-			if err != nil {
-				log.Errorf("failed to get active requests from sibling %s: %v", sibling.Address, err)
-				return
-			}
-
-			requestMutex.Lock()
-			requests[sibling.Address.Name] = int(count.Count)
-
-			if sibling.Address.Name == b.self.Address.Name {
-				// substract the current request
-				requests[sibling.Address.Name]--
-			}
-			requestMutex.Unlock()
-
-			log.Debugf("got active requests from sibling %s: %d", sibling.Address.Name, count.Count)
-		}()
+		log.Debugf("got function list from sibling %s: %+v", sibling.Address.Name, list.FunctionNames)
 	}
 
 	log.Debug("waiting for function list and active requests")
@@ -139,7 +113,6 @@ func (b *BaseNode) updateSelectionContext() {
 	b.selectionContext.Siblings = b.siblings
 	b.selectionContext.CurrentNode = &b.self
 	b.selectionContext.ParentNode = &b.parent
-	b.selectionContext.ActiveRequests = requests
 	b.selectionContext.DeployedFuncs = functions
 
 	log.Debug("updated selection context")
@@ -394,7 +367,7 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 		b.updateSelectionContext()
 	}
 
-	if time.Since(b.selectionContextAge) > 1*time.Second {
+	if time.Since(b.selectionContextAge) > 20*time.Second {
 		log.Debug("updating old selection context in background")
 		go b.updateSelectionContext()
 	}
@@ -456,7 +429,15 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 
 			log.Infof("calling function %s on node %s", in.FunctionIdentifier, result.SelectedNode.Address.Name)
 
+			b.selectionContext.Mutex.Lock()
+			b.selectionContext.ActiveRequests[result.SelectedNode.Address.Name]++
+			b.selectionContext.Mutex.Unlock()
+
 			resp, err := result.SelectedNode.Client.CallFunctionLocal(context.Background(), in)
+
+			b.selectionContext.Mutex.Lock()
+			b.selectionContext.ActiveRequests[result.SelectedNode.Address.Name]--
+			b.selectionContext.Mutex.Unlock()
 
 			if err != nil {
 				log.Warnf("failed to call function: %v", err)
@@ -569,7 +550,9 @@ func (b *BaseNode) deployFunction(function *Function) error {
 		return fmt.Errorf("upload failed with status code %d", res.StatusCode)
 	}
 
-	go b.updateSelectionContext()
+	if b.config.Mode == "edge" {
+		go b.updateSelectionContext()
+	}
 
 	return nil
 }

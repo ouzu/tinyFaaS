@@ -10,6 +10,55 @@ type RoundRobinHotStrategy struct {
 	n int
 }
 
+func (l *RoundRobinHotStrategy) selectDeploymentNode(ctx *StrategyContext, name string) *NodeConnection {
+	// build a list of nodes which do not have the function deployed
+	var coldNodes []NodeConnection
+
+	ctx.Mutex.RLock()
+	defer ctx.Mutex.RUnlock()
+
+	for _, node := range ctx.Siblings {
+		if funcs, ok := ctx.DeployedFuncs[node.Address.Name]; ok {
+			found := false
+			for _, f := range funcs {
+				if f == name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				coldNodes = append(coldNodes, node)
+			}
+		} else {
+			coldNodes = append(coldNodes, node)
+		}
+	}
+
+	// check if any nodes do not have the function deployed
+	if len(coldNodes) == 0 {
+		log.Errorf("no nodes available for deployment of function %s", name)
+		return nil
+	}
+
+	// get the minimum number of deployed functions
+	min := len(ctx.DeployedFuncs[coldNodes[0].Address.Name])
+	for _, node := range coldNodes {
+		if len(ctx.DeployedFuncs[node.Address.Name]) < min {
+			min = len(ctx.DeployedFuncs[node.Address.Name])
+		}
+	}
+
+	// choose a cold node with the least number of deployed functions
+	var minNodes []NodeConnection
+	for _, node := range coldNodes {
+		if len(ctx.DeployedFuncs[node.Address.Name]) == min {
+			minNodes = append(minNodes, node)
+		}
+	}
+
+	return &minNodes[rand.Intn(len(minNodes))]
+}
+
 func (l *RoundRobinHotStrategy) SelectNode(ctx *StrategyContext, name string) (*NodeSelectionResult, error) {
 	ctx.Mutex.RLock()
 	defer ctx.Mutex.RUnlock()
@@ -56,6 +105,29 @@ func (l *RoundRobinHotStrategy) SelectNode(ctx *StrategyContext, name string) (*
 		NeedsDeployment:  true,
 		DeploymentTarget: &target,
 		SyncDeployment:   true,
+	}
+
+	// get the least amount of active requests
+	min := ctx.ActiveRequests[hotNodes[0].Address.Name]
+	for _, node := range hotNodes {
+		if ctx.ActiveRequests[node.Address.Name] < min {
+			min = ctx.ActiveRequests[node.Address.Name]
+		}
+	}
+
+	if min > DEPLOYMENT_THRESHOLD {
+		log.Infof("deployment threshold exceeded, requesting additional deployment of %s", name)
+
+		deploymentTarget := l.selectDeploymentNode(ctx, name)
+		if deploymentTarget == nil {
+			log.Warnf("no deployment target found for function %s", name)
+			return result, nil
+		}
+
+		log.Debugf("selecting node %s for deployment of %s", deploymentTarget.Address.Name, name)
+
+		result.NeedsDeployment = true
+		result.DeploymentTarget = deploymentTarget
 	}
 
 	// check if function is deployed on the target node

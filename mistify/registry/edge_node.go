@@ -16,6 +16,7 @@ const (
 	C_RANDOM_HOT      = "randomhot"
 	C_ROUND_ROBIN     = "roundrobin"
 	C_ROUND_ROBIN_HOT = "roundrobinhot"
+	C_LEAST_BUSY_EDGE = "leastbusyedge"
 )
 
 type EdgeNode struct {
@@ -29,6 +30,9 @@ func NewEdgeNode(config *tfconfig.TFConfig) *EdgeNode {
 	case C_LEAST_BUSY:
 		log.Info("Using least busy strategy")
 		strategy = &LeastBusyStrategy{}
+	case C_LEAST_BUSY_EDGE:
+		log.Info("Using least busy edge strategy")
+		strategy = &LeastBusyEdgeStrategy{}
 	case C_LOCAL:
 		log.Info("Using local strategy")
 		strategy = &LocalOnlyStrategy{}

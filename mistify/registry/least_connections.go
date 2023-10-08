@@ -78,7 +78,7 @@ func (l *LeastConnectionsStrategy) SelectNode(ctx *StrategyContext, name string)
 
 	// check if any nodes have the function deployed
 	if len(hotNodes) == 0 {
-		log.Infof("no sibling nodes have function %s deployed, escalating to parent", name)
+		log.Infof("no sibling nodes have function %s deployed", name)
 
 		deploymentTarget := l.selectDeploymentNode(ctx, name)
 		if deploymentTarget == nil {
@@ -87,10 +87,10 @@ func (l *LeastConnectionsStrategy) SelectNode(ctx *StrategyContext, name string)
 		}
 
 		return &NodeSelectionResult{
-			SelectedNode:     ctx.ParentNode,
+			SelectedNode:     deploymentTarget,
 			NeedsDeployment:  true,
 			DeploymentTarget: deploymentTarget,
-			SyncDeployment:   false,
+			SyncDeployment:   true,
 		}, nil
 	}
 

@@ -59,21 +59,36 @@ func NCtoNames(nc []NodeConnection) []string {
 
 type BaseNode struct {
 	pb.UnimplementedMistifyServer
-	self                    NodeConnection
-	children                []NodeConnection
-	siblings                []NodeConnection
-	mutex                   sync.RWMutex
-	parent                  NodeConnection
-	config                  *tfconfig.TFConfig
-	registry                map[string]string
-	selectionContext        StrategyContext
-	selectionContextAge     time.Time
-	selectionStrategy       NodeSelectionStrategy
-	functionDeployments     map[string][]string
-	functionDeploymentMutex sync.RWMutex
+	self                     NodeConnection
+	children                 []NodeConnection
+	siblings                 []NodeConnection
+	mutex                    sync.RWMutex
+	parent                   NodeConnection
+	config                   *tfconfig.TFConfig
+	registry                 map[string]string
+	selectionContext         StrategyContext
+	selectionContextAge      time.Time
+	selectionStrategy        NodeSelectionStrategy
+	updatingSelectionContext bool
+	updatingSelectionMutex   sync.Mutex
+	functionDeployments      map[string][]string
+	functionDeploymentMutex  sync.RWMutex
 }
 
 func (b *BaseNode) updateSelectionContext() {
+	b.updatingSelectionMutex.Lock()
+	if b.updatingSelectionContext {
+		return
+	}
+	b.updatingSelectionContext = true
+	b.updatingSelectionMutex.Unlock()
+
+	defer func() {
+		b.updatingSelectionMutex.Lock()
+		b.updatingSelectionContext = false
+		b.updatingSelectionMutex.Unlock()
+	}()
+
 	wg := sync.WaitGroup{}
 
 	functions := make(map[string][]string)
@@ -366,6 +381,8 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 
 		backoff := 1 * time.Second
 
+		requestedDeployment := false
+
 		for {
 			result, err := b.selectionStrategy.SelectNode(&b.selectionContext, in.FunctionIdentifier)
 			if err != nil {
@@ -373,7 +390,8 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 				return nil, fmt.Errorf("failed to select node: %v", err)
 			}
 
-			if result.NeedsDeployment {
+			if result.NeedsDeployment && !requestedDeployment {
+				requestedDeployment = true
 				log.Infof("requesting deployment of function %s on node %s", in.FunctionIdentifier, result.SelectedNode.Address.Name)
 
 				deploy := func() error {

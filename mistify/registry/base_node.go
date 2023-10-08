@@ -93,7 +93,9 @@ func (b *BaseNode) updateSelectionContext() {
 				return
 			}
 
+			log.Debug("locking mutex")
 			functionMutex.Lock()
+			log.Debug("locked mutex")
 			functions[sibling.Address.Name] = list.FunctionNames
 			functionMutex.Unlock()
 
@@ -109,7 +111,9 @@ func (b *BaseNode) updateSelectionContext() {
 
 	log.Debug("updating selection context")
 
+	log.Debug("locking mutex")
 	b.selectionContext.Mutex.Lock()
+	log.Debug("locked mutex")
 	defer b.selectionContext.Mutex.Unlock()
 
 	b.selectionContextAge = time.Now()
@@ -123,7 +127,10 @@ func (b *BaseNode) updateSelectionContext() {
 }
 
 func (b *BaseNode) increaseConnectionCount() {
+	log.Debug("locking mutex")
 	b.connectionCountMutex.Lock()
+	log.Debug("locked mutex")
+
 	defer b.connectionCountMutex.Unlock()
 
 	b.connectionCount++
@@ -132,7 +139,9 @@ func (b *BaseNode) increaseConnectionCount() {
 }
 
 func (b *BaseNode) decreaseConnectionCount() {
+	log.Debug("locking mutex")
 	b.connectionCountMutex.Lock()
+	log.Debug("locked mutex")
 	defer b.connectionCountMutex.Unlock()
 
 	b.connectionCount--
@@ -198,7 +207,9 @@ func (b *BaseNode) serve() {
 		if err != nil {
 			log.Fatalf("failed to dial: %v", err)
 		}
+		log.Debug("locking mutex")
 		b.mutex.Lock()
+		log.Debug("locked mutex")
 		defer b.mutex.Unlock()
 		b.self.Client = pb.NewMistifyClient(conn)
 	}()
@@ -214,7 +225,9 @@ func (b *BaseNode) Info(ctx context.Context, in *pb.Empty) (*pb.NodeAddress, err
 }
 
 func (b *BaseNode) GetActiveRequests(ctx context.Context, in *pb.Empty) (*pb.RequestCount, error) {
+	log.Debug("locking mutex")
 	b.connectionCountMutex.RLock()
+	log.Debug("locked mutex")
 	defer b.connectionCountMutex.RUnlock()
 
 	return &pb.RequestCount{
@@ -258,7 +271,9 @@ func (b *BaseNode) GetFunctionList(ctx context.Context, in *pb.Empty) (*pb.Funct
 // ! **********************************
 
 func (b *BaseNode) UpdateSiblingList(ctx context.Context, in *pb.SiblingList) (*pb.Empty, error) {
+	log.Debug("locking mutex")
 	b.mutex.Lock()
+	log.Debug("locked mutex")
 	defer b.mutex.Unlock()
 
 	// TODO: query new siblings only
@@ -288,7 +303,9 @@ func (b *BaseNode) Register(ctx context.Context, in *pb.NodeAddress) (*pb.Empty,
 		return nil, fmt.Errorf("edge nodes cannot accept registrations")
 	}
 
+	log.Debug("locking mutex")
 	b.mutex.Lock()
+	log.Debug("locked mutex")
 	defer b.mutex.Unlock()
 
 	conn, err := grpc.Dial(
@@ -433,13 +450,17 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 
 			log.Infof("calling function %s on node %s", in.FunctionIdentifier, result.SelectedNode.Address.Name)
 
+			log.Debug("locking mutex")
 			b.selectionContext.Mutex.Lock()
+			log.Debug("locked mutex")
 			b.selectionContext.ActiveRequests[result.SelectedNode.Address.Name]++
 			b.selectionContext.Mutex.Unlock()
 
 			resp, err := result.SelectedNode.Client.CallFunctionLocal(context.Background(), in)
 
+			log.Debug("locking mutex")
 			b.selectionContext.Mutex.Lock()
+			log.Debug("locked mutex")
 			b.selectionContext.ActiveRequests[result.SelectedNode.Address.Name]--
 			b.selectionContext.Mutex.Unlock()
 
@@ -590,7 +611,9 @@ func (b *BaseNode) RegisterFunction(ctx context.Context, in *pb.Function) (*pb.E
 		return nil, fmt.Errorf("failed to deploy function: %v", err)
 	}
 
+	log.Debug("locking mutex")
 	b.mutex.Lock()
+	log.Debug("locked mutex")
 	b.registry[in.Name] = function.Name
 	b.mutex.Unlock()
 
@@ -663,7 +686,9 @@ func (b *BaseNode) DeployFunction(ctx context.Context, in *pb.Function) (*pb.Emp
 	}
 
 	if b.config.Mode == "fog" {
+		log.Debug("locking mutex")
 		b.mutex.Lock()
+		log.Debug("locked mutex")
 		b.registry[f.Name] = in.Json
 		b.mutex.Unlock()
 
@@ -676,7 +701,9 @@ func (b *BaseNode) DeployFunction(ctx context.Context, in *pb.Function) (*pb.Emp
 }
 
 func (b *BaseNode) getFunctionDeploymentStatus(name string, child string) bool {
+	log.Debug("locking mutex")
 	b.functionDeploymentMutex.RLock()
+	log.Debug("locked mutex")
 	defer b.functionDeploymentMutex.RUnlock()
 
 	if b.functionDeployments == nil {
@@ -697,7 +724,9 @@ func (b *BaseNode) getFunctionDeploymentStatus(name string, child string) bool {
 }
 
 func (b *BaseNode) setFunctionDeploymentStatus(name string, child string, status bool) {
+	log.Debug("locking mutex")
 	b.functionDeploymentMutex.Lock()
+	log.Debug("locked mutex")
 	defer b.functionDeploymentMutex.Unlock()
 
 	if b.functionDeployments == nil {

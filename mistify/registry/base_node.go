@@ -66,8 +66,6 @@ type BaseNode struct {
 	parent                  NodeConnection
 	config                  *tfconfig.TFConfig
 	registry                map[string]string
-	connectionCount         int
-	connectionCountMutex    sync.RWMutex
 	selectionContext        StrategyContext
 	selectionContextAge     time.Time
 	selectionStrategy       NodeSelectionStrategy
@@ -124,29 +122,6 @@ func (b *BaseNode) updateSelectionContext() {
 	b.selectionContext.DeployedFuncs = functions
 
 	log.Debug("updated selection context")
-}
-
-func (b *BaseNode) increaseConnectionCount() {
-	log.Debug("locking mutex")
-	b.connectionCountMutex.Lock()
-	log.Debug("locked mutex")
-
-	defer b.connectionCountMutex.Unlock()
-
-	b.connectionCount++
-
-	log.Debugf("connection count increased to %d", b.connectionCount)
-}
-
-func (b *BaseNode) decreaseConnectionCount() {
-	log.Debug("locking mutex")
-	b.connectionCountMutex.Lock()
-	log.Debug("locked mutex")
-	defer b.connectionCountMutex.Unlock()
-
-	b.connectionCount--
-
-	log.Debugf("connection count decreased to %d", b.connectionCount)
 }
 
 func (b *BaseNode) Start() {
@@ -230,17 +205,6 @@ func (b *BaseNode) serve() {
 
 func (b *BaseNode) Info(ctx context.Context, in *pb.Empty) (*pb.NodeAddress, error) {
 	return b.self.Address, nil
-}
-
-func (b *BaseNode) GetActiveRequests(ctx context.Context, in *pb.Empty) (*pb.RequestCount, error) {
-	log.Debug("locking mutex")
-	b.connectionCountMutex.RLock()
-	log.Debug("locked mutex")
-	defer b.connectionCountMutex.RUnlock()
-
-	return &pb.RequestCount{
-		Count: int32(b.connectionCount),
-	}, nil
 }
 
 func (b *BaseNode) GetFunctionList(ctx context.Context, in *pb.Empty) (*pb.FunctionList, error) {
@@ -369,9 +333,6 @@ func (b *BaseNode) Register(ctx context.Context, in *pb.NodeAddress) (*pb.Empty,
 func (b *BaseNode) CallFunctionLocal(ctx context.Context, in *pb.FunctionCall) (*pb.FunctionCallResponse, error) {
 	log.Debugf("have local function call: %+v", in)
 
-	go b.increaseConnectionCount()
-	defer b.decreaseConnectionCount()
-
 	resp, err := b.callProxy(in.FunctionIdentifier, []byte(in.Data))
 	if err != nil {
 		log.Errorf("failed to call function: %v", err)
@@ -396,7 +357,7 @@ func (b *BaseNode) CallFunction(ctx context.Context, in *pb.FunctionCall) (*pb.F
 		b.updateSelectionContext()
 	}
 
-	if time.Since(b.selectionContextAge) > 20*time.Second {
+	if time.Since(b.selectionContextAge) > 5*time.Second {
 		log.Debug("updating old selection context in background")
 		go b.updateSelectionContext()
 	}

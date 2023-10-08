@@ -9,7 +9,6 @@ service Mistify {
     rpc Register(NodeAddress) returns (Empty);
     rpc UpdateSiblingList(SiblingList) returns (Empty);
     rpc GetFunctionList(Empty) returns (FunctionList);
-    rpc GetActiveRequests(Empty) returns (RequestCount);
     rpc RequestDeployment(DeploymentRequest) returns (Empty);
     rpc DeployFunction(Function) returns (Empty);
     rpc RegisterFunction(Function) returns (Empty);
@@ -32,10 +31,6 @@ message Empty {}
 
 message FunctionList {
     repeated string function_names = 1;
-}
-
-message RequestCount {
-    int32 count = 1;
 }
 
 message DeploymentRequest {

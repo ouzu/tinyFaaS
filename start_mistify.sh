@@ -11,7 +11,6 @@ run_mistify() {
 
 for toml_file in "${TOML_FILES[@]}"; do
     run_mistify "$toml_file" &
-    sleep 0.3
 done
 
 wait

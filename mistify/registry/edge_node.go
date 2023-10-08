@@ -10,13 +10,14 @@ import (
 )
 
 const (
-	C_LEAST_BUSY      = "leastbusy"
-	C_LOCAL           = "local"
-	C_RANDOM          = "random"
-	C_RANDOM_HOT      = "randomhot"
-	C_ROUND_ROBIN     = "roundrobin"
-	C_ROUND_ROBIN_HOT = "roundrobinhot"
-	C_LEAST_BUSY_EDGE = "leastbusyedge"
+	C_LEAST_BUSY        = "leastbusy"
+	C_LOCAL             = "local"
+	C_RANDOM            = "random"
+	C_RANDOM_HOT        = "randomhot"
+	C_ROUND_ROBIN       = "roundrobin"
+	C_ROUND_ROBIN_HOT   = "roundrobinhot"
+	C_LEAST_BUSY_EDGE   = "leastbusyedge"
+	C_LEAST_CONNECTIONS = "leastconnections"
 )
 
 type EdgeNode struct {
@@ -27,6 +28,9 @@ func NewEdgeNode(config *tfconfig.TFConfig) *EdgeNode {
 	var strategy NodeSelectionStrategy
 
 	switch config.MistifyStrategy {
+	case C_LEAST_CONNECTIONS:
+		log.Info("Using least connections strategy")
+		strategy = &LeastConnectionsStrategy{}
 	case C_LEAST_BUSY:
 		log.Info("Using least busy strategy")
 		strategy = &LeastBusyStrategy{}

@@ -151,37 +151,45 @@ func (b *BaseNode) decreaseConnectionCount() {
 
 func (b *BaseNode) Start() {
 	go func() {
-		time.Sleep(100 * time.Millisecond)
-		if b.config.ParentAddress != "" {
-			log.Debug("connecting to parent node")
-			conn, err := grpc.Dial(
-				b.config.ParentAddress,
-				grpc.WithTransportCredentials(insecure.NewCredentials()),
-			)
-			if err != nil {
-				log.Fatalf("failed to dial: %v", err)
-			}
-			b.parent.Client = pb.NewMistifyClient(conn)
+		for {
+			time.Sleep(1000 * time.Millisecond)
 
-			log.Debug("getting info from parent node")
-			info, err := b.parent.Client.Info(
-				context.Background(),
-				&pb.Empty{},
-			)
-			if err != nil {
-				log.Fatalf("failed to get info from parent node: %v", err)
+			if b.config.ParentAddress != "" {
+				log.Debug("connecting to parent node")
+				conn, err := grpc.Dial(
+					b.config.ParentAddress,
+					grpc.WithTransportCredentials(insecure.NewCredentials()),
+				)
+				if err != nil {
+					log.Errorf("failed to dial: %v", err)
+					continue
+				}
+				b.parent.Client = pb.NewMistifyClient(conn)
+
+				log.Debug("getting info from parent node")
+				info, err := b.parent.Client.Info(
+					context.Background(),
+					&pb.Empty{},
+				)
+				if err != nil {
+					log.Errorf("failed to get info from parent node: %v", err)
+					continue
+				}
+
+				b.parent.Address = info
+
+				log.Infof("registering with parent %s", b.parent.Address.Name)
+				_, err = b.parent.Client.Register(
+					context.Background(),
+					b.self.Address,
+				)
+				if err != nil {
+					log.Errorf("failed to register with parent node: %v", err)
+					continue
+				}
 			}
 
-			b.parent.Address = info
-
-			log.Infof("registering with parent %s", b.parent.Address.Name)
-			_, err = b.parent.Client.Register(
-				context.Background(),
-				b.self.Address,
-			)
-			if err != nil {
-				log.Fatalf("failed to register with parent node: %v", err)
-			}
+			break
 		}
 	}()
 

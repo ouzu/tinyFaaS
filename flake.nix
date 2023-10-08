@@ -1,6 +1,8 @@
 {
   description = "tinyFaaS-cli";
 
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-23.05";
+
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
   inputs.tinyFaaS-cli.url = "github:ouzu/tinyFaaS-cli";

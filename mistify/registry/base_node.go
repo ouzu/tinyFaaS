@@ -82,21 +82,25 @@ func (b *BaseNode) updateSelectionContext() {
 	functionMutex := sync.Mutex{}
 
 	for _, s := range b.siblings {
-		wg.Add(2)
+		wg.Add(1)
 
 		sibling := s
 
-		list, err := sibling.Client.GetFunctionList(context.Background(), &pb.Empty{})
-		if err != nil {
-			log.Errorf("failed to get function list from sibling %s: %v", sibling.Address, err)
-			return
-		}
+		go func() {
+			list, err := sibling.Client.GetFunctionList(context.Background(), &pb.Empty{})
+			if err != nil {
+				log.Errorf("failed to get function list from sibling %s: %v", sibling.Address, err)
+				return
+			}
 
-		functionMutex.Lock()
-		functions[sibling.Address.Name] = list.FunctionNames
-		functionMutex.Unlock()
+			functionMutex.Lock()
+			functions[sibling.Address.Name] = list.FunctionNames
+			functionMutex.Unlock()
 
-		log.Debugf("got function list from sibling %s: %+v", sibling.Address.Name, list.FunctionNames)
+			log.Debugf("got function list from sibling %s: %+v", sibling.Address.Name, list.FunctionNames)
+
+			wg.Done()
+		}()
 	}
 
 	log.Debug("waiting for function list and active requests")

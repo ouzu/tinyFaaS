@@ -32,7 +32,7 @@ Mode = "$mode"
 RegistryPort = $((4000 + prefix))
 Host = "localhost"
 
-MistifyStrategy = "local"
+MistifyStrategy = "leastbusy"
 EOL
 
     if [ -n "$parent" ]; then
